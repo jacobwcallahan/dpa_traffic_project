@@ -1,0 +1,241 @@
+---
+title: "DPA Model Development"
+author: "Jacob Callahan"
+date: "2025-04-22"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyr)
+library(caret)
+library(nnet)
+
+# Accessing Dataset
+csv_data = as.data.frame(read.csv("~/Documents/iit/SP25/DPA/Project/modeling/final_dataset.csv"))
+
+```
+
+## Some data cleaning 
+
+Changes some of the dta
+
+```{r}
+unclean_data = csv_data
+# Replaces (N/A) with Unable to Determine in Cause1 vector
+unclean_data$Cause1 = ifelse(unclean_data$Cause1 == "(N/A)",
+                          "Unable to Determine", unclean_data$Cause1)
+
+# Replaces injury in CrashSeverity with injury A,B,C and drops CrashInjurySeverity
+# unclean_data$CrashSeverity = ifelse(unclean_data$CrashSeverity == "Injury",
+#                             as.character(unclean_data$CrashInjurySeverity), 
+#                             as.character(unclean_data$CrashSeverity))
+
+# Drops CrashSeverityCD and CrashInjurySeverity as they have collinearity with CrashSeverity
+unclean_data = unclean_data[,-c(1,2)]
+
+
+
+# Swapping CrashSeverity to first column
+unclean_data = unclean_data[, c("CrashSeverity", "TotalInjured", 
+                                setdiff(names(unclean_data), 
+                                c("TotalInjured", "CrashSeverity")))]
+
+# This drops TimeOfCrash and DamagedProperty1. These variables need to be fixed to conduct analysis on. 
+unclean_data = unclean_data[,!colnames(unclean_data) %in% c("TimeOfCrash","DamagedProperty1","CrashMonth",                            "CityClassCode","CityName","CityClassCode","CrashReportCounty","TotalInjured","TrafficControlDeviceCond")] 
+
+orig_data = unclean_data
+
+```
+
+## Factorizing the categorical variables
+
+```{r}
+cols = colnames(orig_data)
+
+num_vars = c("CrashSeverityCd","CityClassCode","TotalInjured","TimeOfCrash","CrashMonth")
+
+for (i in 1:length(orig_data)) {
+  if (!colnames(orig_data)[i] %in% num_vars) {
+    orig_data[,i] = as.factor(orig_data[,i,drop = TRUE])
+  }
+}
+
+```
+
+```{r}
+data = orig_data[sample.int(nrow(orig_data), size = 1000),]
+severity = data$CrashSeverity
+```
+
+
+## Splitting up the data
+
+Here we are splitting the data into training and testing sets. The test set is only 20% of the size of the training data. 
+
+```{r}
+
+n = nrow(data)
+train.inds = sample.int(n, size = n*.8)
+
+train = data[train.inds,]
+test = data[-train.inds,]
+
+```
+
+
+## Developing Baseline Model
+
+Source of VGAM package: https://www.geeksforgeeks.org/multinomial-logistic-regression-in-r/#
+
+Our baseline model will be a simple multinomial Logistic Regression. Our response variable will be *CrashSeverity*. Our sole predictor will be *WeatherCond*. The three responses we will be predicting can be Fatal, Injury, or Property Damage.
+
+```{r}
+
+
+model.log = multinom(CrashSeverity ~ WeatherCond, data = orig_data, family = multinomial)
+
+yhats <- predict(model.log, test, type = "class")
+conf_mat = table(predicted = yhats, actual = test$CrashSeverity)
+conf_mat
+
+```
+
+Clearly we can see that the baseline model is not very effective at predicting anything but Property Damage. 
+
+
+## Adding predictors to baseline model
+
+Our initial model was only partially effective as we just had a single predictor. Now we will add all predictors for a multiple multinomial logistic regression.
+
+Using library "nnet" to conduct multinomial logistic regression. 
+
+```{r}
+library(nnet)
+
+model.log = multinom(CrashSeverity ~ ., data = train)
+
+yhats = predict(model.log, test, type = 'class')
+
+table(predicted = yhats, actual = test$CrashSeverity)
+
+```
+
+
+```{r}
+cv_model <- function(formula, data, model_func, predict_func, k = 5, ...) {
+  set.seed(123)
+  folds <- cut(seq(1, nrow(data)), breaks = k, labels = FALSE)
+  
+  all_actuals <- c()
+  all_preds <- c()
+  
+  for (i in 1:k) {
+    test_idx <- which(folds == i)
+    test_data <- data[test_idx, ]
+    train_data <- data[-test_idx, ]
+    
+    model <- model_func(formula, train_data, ...)
+    preds <- predict_func(model, test_data)
+    actuals <- model.frame(formula, test_data)[[1]]
+    
+    all_actuals <- c(all_actuals, as.character(actuals))
+    all_preds <- c(all_preds, as.character(preds))
+  }
+
+  classes <- sort(unique(c(all_actuals, all_preds)))
+  
+  actual_counts <- table(factor(all_actuals, levels = classes))
+  pred_counts <- table(factor(all_preds, levels = classes))
+  
+  df <- as.data.frame(t(c(actual_counts, pred_counts)))
+  names(df) <- c(paste0("actual_", classes), paste0("pred_", classes))
+  
+  return(df)
+}
+```
+
+```{r}
+cv_df = cv_model(CrashSeverity ~ ., data, multinom,predict)
+cv_df
+```
+
+## Basic Plotting
+
+```{r}
+
+# Assume df has 'CrashSeverity' and 'WeatherCond'
+df_percent <- csv_data %>%
+  group_by(CrashSeverity, DayOfWeek) %>%
+  summarise(n = n(), .groups = 'drop') %>%
+  group_by(DayOfWeek) %>%
+  mutate(percent = 100 * n / sum(n))
+
+df_percent
+
+ggplot(df_percent, aes(x = CrashSeverity, y = percent, fill = DayOfWeek)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Percentage of Weather Conditions by Crash Severity",
+       x = "Crash Severity",
+       y = "Percentage") +
+  theme_minimal()
+
+df_fatal = df_percent %>% 
+  filter(CrashSeverity == "Fatal")
+
+ggplot(df_fatal, aes(x = CrashSeverity, y = percent, fill = DayOfWeek)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Percentage of Weather Conditions by Crash Severity",
+       x = "Crash Severity",
+       y = "Percentage") +
+  theme_minimal()
+```
+
+## RandomForest Analysis
+
+```{r}
+library(ranger)
+library(MLmetrics)
+
+data = orig_data
+
+train_inds = sample(1:nrow(data), nrow(data) * .8)
+  
+train = data[train_inds,]
+test = data[-train_inds,]
+y_test = data[-train_inds,'CrashSeverity']
+
+model.rf = ranger(CrashSeverity ~ ., train, 
+                  mtry = 4,
+                  num.trees = 500,
+                  num.threads = 16)
+yhats = predict(model.rf, test, response = 'class')
+
+table(predictions = yhats$predictions, actual = y_test)
+
+
+f1_per_class <- sapply(levels(y_test), function(class) {
+  F1_Score(y_pred = yhats$predictions, y_true = y_test, positive = class)
+})
+
+support <- table(test$CrashSeverity)
+weighted_f1 <- sum(f1_per_class * support) / sum(support)
+weighted_f1
+colnames(data)
+```
+```{r}
+
+```
+
+
+```{r}
+library(ROSE)
+balanced_data <- ovun.sample(target ~ ., data = your_data, method = "over", N = 10000)$data
+# 
+```
+
+
