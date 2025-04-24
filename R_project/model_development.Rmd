@@ -14,66 +14,60 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyr)
 library(caret)
 library(nnet)
+source("get_clean_data.R")
 
-# Accessing Dataset
-csv_data = as.data.frame(read.csv("~/Documents/iit/SP25/DPA/Project/modeling/final_dataset.csv"))
-
+orig_data = get_clean_data()
+data = orig_data
 ```
 
-## Some data cleaning 
+## Model Metric
 
-Changes some of the dta
-
-```{r}
-unclean_data = csv_data
-# Replaces (N/A) with Unable to Determine in Cause1 vector
-unclean_data$Cause1 = ifelse(unclean_data$Cause1 == "(N/A)",
-                          "Unable to Determine", unclean_data$Cause1)
-
-# Replaces injury in CrashSeverity with injury A,B,C and drops CrashInjurySeverity
-# unclean_data$CrashSeverity = ifelse(unclean_data$CrashSeverity == "Injury",
-#                             as.character(unclean_data$CrashInjurySeverity), 
-#                             as.character(unclean_data$CrashSeverity))
-
-# Drops CrashSeverityCD and CrashInjurySeverity as they have collinearity with CrashSeverity
-unclean_data = unclean_data[,-c(1,2)]
-
-
-
-# Swapping CrashSeverity to first column
-unclean_data = unclean_data[, c("CrashSeverity", "TotalInjured", 
-                                setdiff(names(unclean_data), 
-                                c("TotalInjured", "CrashSeverity")))]
-
-# This drops TimeOfCrash and DamagedProperty1. These variables need to be fixed to conduct analysis on. 
-unclean_data = unclean_data[,!colnames(unclean_data) %in% c("TimeOfCrash","DamagedProperty1","CrashMonth",                            "CityClassCode","CityName","CityClassCode","CrashReportCounty","TotalInjured","TrafficControlDeviceCond")] 
-
-orig_data = unclean_data
-
-```
-
-## Factorizing the categorical variables
+This function "get_weighted_f1" allows for the weighted f1 based on the test set predictions.
 
 ```{r}
-cols = colnames(orig_data)
-
-num_vars = c("CrashSeverityCd","CityClassCode","TotalInjured","TimeOfCrash","CrashMonth")
-
-for (i in 1:length(orig_data)) {
-  if (!colnames(orig_data)[i] %in% num_vars) {
-    orig_data[,i] = as.factor(orig_data[,i,drop = TRUE])
+get_weighted_f1 = function(y.hats, y.test) {
+  f1_per_class <- sapply(levels(y.test), function(class) {
+    score <- tryCatch({
+      F1_Score(y_pred = y.hats, y_true = y.test, positive = class)
+    }, error = function(e) {
+      return(0)
+    })
+    if (is.na(score) || is.nan(score)) score <- 0
+    return(score)
+  })
+  
+  support <- table(test$CrashSeverity)
+  weighted_f1 <- sum(f1_per_class * support) / sum(support)
+  
+  if (is.nan(weighted_f1)) {
+    print(support)
+    print(f1_per_class)
   }
+  
+  return(weighted_f1)
 }
-
 ```
+
+# Create one hot encoded matrix for data (Besides target variable)
 
 ```{r}
-data = orig_data[sample.int(nrow(orig_data), size = 1000),]
-severity = data$CrashSeverity
+# Creates and saves the labels
+label_factor <- factor(orig_data[,1])                 
+labels <- as.integer(label_factor) - 1          
+label_levels <- levels(label_factor)   
+
+# Turns orig_data into data_mat
+# Target variable mapping is 0 - Fatal, 1 - Injury, 2 - Property Damage
+data_mat = model.matrix(~., data = orig_data[,-1])
+data_mat[,1] = as.integer(orig_data$CrashSeverity) - 1
+colnames(data_mat)[1] = "CrashSeverity"
+
+# This is how to turn the target variable back into characters
+y = label_levels[data_mat[,1] + 1]
 ```
 
 
-## Splitting up the data
+## Creating a training and test split
 
 Here we are splitting the data into training and testing sets. The test set is only 20% of the size of the training data. 
 
@@ -95,8 +89,6 @@ Source of VGAM package: https://www.geeksforgeeks.org/multinomial-logistic-regre
 Our baseline model will be a simple multinomial Logistic Regression. Our response variable will be *CrashSeverity*. Our sole predictor will be *WeatherCond*. The three responses we will be predicting can be Fatal, Injury, or Property Damage.
 
 ```{r}
-
-
 model.log = multinom(CrashSeverity ~ WeatherCond, data = orig_data, family = multinomial)
 
 yhats <- predict(model.log, test, type = "class")
@@ -106,7 +98,6 @@ conf_mat
 ```
 
 Clearly we can see that the baseline model is not very effective at predicting anything but Property Damage. 
-
 
 ## Adding predictors to baseline model
 
@@ -123,91 +114,55 @@ yhats = predict(model.log, test, type = 'class')
 
 table(predicted = yhats, actual = test$CrashSeverity)
 
+get_weighted_f1(yhats, test[,"CrashSeverity"])
 ```
 
 
-```{r}
-cv_model <- function(formula, data, model_func, predict_func, k = 5, ...) {
-  set.seed(123)
-  folds <- cut(seq(1, nrow(data)), breaks = k, labels = FALSE)
-  
-  all_actuals <- c()
-  all_preds <- c()
-  
-  for (i in 1:k) {
-    test_idx <- which(folds == i)
-    test_data <- data[test_idx, ]
-    train_data <- data[-test_idx, ]
-    
-    model <- model_func(formula, train_data, ...)
-    preds <- predict_func(model, test_data)
-    actuals <- model.frame(formula, test_data)[[1]]
-    
-    all_actuals <- c(all_actuals, as.character(actuals))
-    all_preds <- c(all_preds, as.character(preds))
-  }
-
-  classes <- sort(unique(c(all_actuals, all_preds)))
-  
-  actual_counts <- table(factor(all_actuals, levels = classes))
-  pred_counts <- table(factor(all_preds, levels = classes))
-  
-  df <- as.data.frame(t(c(actual_counts, pred_counts)))
-  names(df) <- c(paste0("actual_", classes), paste0("pred_", classes))
-  
-  return(df)
-}
-```
+# More Feature Selection
 
 ```{r}
-cv_df = cv_model(CrashSeverity ~ ., data, multinom,predict)
-cv_df
-```
+library(glmnet)
+set.seed(1)
 
-## Basic Plotting
+sampled_data = orig_data[sample.int(nrow(orig_data), 30000),]
 
-```{r}
+x = model.matrix(CrashSeverity ~ ., data = sampled_data)[,-1]
+y = as.integer(sampled_data$CrashSeverity) - 1
 
-# Assume df has 'CrashSeverity' and 'WeatherCond'
-df_percent <- csv_data %>%
-  group_by(CrashSeverity, DayOfWeek) %>%
-  summarise(n = n(), .groups = 'drop') %>%
-  group_by(DayOfWeek) %>%
-  mutate(percent = 100 * n / sum(n))
+cv.lasso = cv.glmnet(x, y, alpha = 1, family = "multinomial")
 
-df_percent
+best.lambda = cv.lasso$lambda.min
+lasso.coefs = coef(cv.lasso, s = "lambda.min")
 
-ggplot(df_percent, aes(x = CrashSeverity, y = percent, fill = DayOfWeek)) +
-  geom_bar(stat = "identity", position = "dodge") +
-  labs(title = "Percentage of Weather Conditions by Crash Severity",
-       x = "Crash Severity",
-       y = "Percentage") +
-  theme_minimal()
+# Obtains the features from lasso that had weights > 0
+selected_features <- unique(unlist(lapply(lasso.coefs, function(m) {
+  coefs <- as.vector(m)
+  names(coefs) <- rownames(m)
+  names(coefs)[coefs != 0 & names(coefs) != "(Intercept)"]
+})))
 
-df_fatal = df_percent %>% 
-  filter(CrashSeverity == "Fatal")
+selected_features = c("CrashSeverity", selected_features)
 
-ggplot(df_fatal, aes(x = CrashSeverity, y = percent, fill = DayOfWeek)) +
-  geom_bar(stat = "identity", position = "dodge") +
-  labs(title = "Percentage of Weather Conditions by Crash Severity",
-       x = "Crash Severity",
-       y = "Percentage") +
-  theme_minimal()
+# Matrix of just the selected features (and target)
+data_selected = data_mat[,selected_features, drop = FALSE]
+
 ```
 
 ## RandomForest Analysis
 
+We're using the package ranger as it allows for parallel processing. 
+
 ```{r}
+
 library(ranger)
 library(MLmetrics)
 
 data = orig_data
 
-train_inds = sample(1:nrow(data), nrow(data) * .8)
-  
-train = data[train_inds,]
-test = data[-train_inds,]
-y_test = data[-train_inds,'CrashSeverity']
+
+train = data[train.inds,]
+test = data[-train.inds,]
+y_test = data[-train.inds,'CrashSeverity']
 
 model.rf = ranger(CrashSeverity ~ ., train, 
                   mtry = 4,
@@ -218,24 +173,194 @@ yhats = predict(model.rf, test, response = 'class')
 table(predictions = yhats$predictions, actual = y_test)
 
 
-f1_per_class <- sapply(levels(y_test), function(class) {
-  F1_Score(y_pred = yhats$predictions, y_true = y_test, positive = class)
+
+get_weighted_f1(yhats$predictions, y_test)
+
+
+```
+
+## XGBoost
+
+```{r}
+library(xgboost)
+label_factor <- factor(data[, 1])                 # e.g., "Low", "High", "Medium"
+labels <- as.integer(label_factor) - 1            # 0-indexed numeric labels
+label_levels <- levels(label_factor)              # store the original meaning
+
+
+# 2. Extract and encode features
+features <- data[, -1]
+features_mat <- model.matrix(~., features)[, -1]
+
+# 3. Split into train/test
+train_x <- features_mat[train.inds, ]
+train_y <- labels[train.inds]
+
+test_x <- features_mat[-train.inds, ]
+test_y <- labels[-train.inds]
+
+# 4. Create DMatrix
+train.xgb <- xgb.DMatrix(data = train_x, label = train_y)
+test.xgb <- xgb.DMatrix(data = test_x)
+
+# 5. Train
+params <- list(
+  objective = "multi:softmax",
+  eval_metric = "mlogloss",
+  num_class = length(label_levels),
+  nthread = 16
+  )
+
+# cv.model.xgb <- xgb.cv(
+#   params = params,
+#   data = train.xgb,
+#   nfold = 5,
+#   nrounds = 100,
+#   verbose = 1,
+#   prediction = TRUE
+# )
+
+classes.xgb <- xgb.train(
+  params = params,
+  data = train.xgb,
+  nrounds = 65
+)
+
+yhats = predict(classes.xgb, test.xgb)
+predicted_labels <- label_levels[yhats + 1]        
+actual_labels <- label_levels[test_y + 1]
+
+# 8. Evaluate
+table(predicted = predicted_labels, actual = actual_labels)
+get_weighted_f1(factor(predicted_labels), factor(actual_labels))
+
+
+
+
+# Matrix of predicted probabilities
+yhat_mat <- matrix(predict(final.xgb, test.xgb),ncol = 3, byrow = TRUE)
+
+# Predicted values based on most probable outcome
+yhats = max.col(yhat_mat)
+
+# 7. Convert numeric predictions back to original labels
+predicted_labels <- label_levels[yhats + 1]        
+actual_labels <- label_levels[test_y + 1]
+
+# 8. Evaluate
+table(predicted = predicted_labels, actual = actual_labels)
+get_weighted_f1(factor(predicted_labels), factor(actual_labels))
+
+
+```
+
+# Probability analysis to change the outcomes
+
+```{r}
+# Predicted Probabilities for fatal when truth != fatal
+not_fatal_probs = yhat_mat[test_y != 0,1]
+
+# Predicted Probabilities for fatal when truth == fatal
+fatal_probs = yhat_mat[test_y == 0,1]
+par(mfrow = c(1,2))
+hist(not_fatal_probs, breaks = 1000, 
+     xlim = c(0,.1),
+     main = "Distribution of Fatal Probablity Predictions when not fatal")
+hist(fatal_probs, breaks = 1000, 
+     xlim = c(0,.1),
+     main = "Distribution of Fatal Probablity Predictions when truly fatal")
+
+threshold = .033
+yhats <- apply(yhat_mat, 1, function(row) {
+  if (row[1] >= threshold) {
+    return(0)
+  } else {
+    return(which.max(row))
+  }
 })
 
-support <- table(test$CrashSeverity)
-weighted_f1 <- sum(f1_per_class * support) / sum(support)
-weighted_f1
-colnames(data)
+sum(yhat_mat[,1] > yhat_mat[,3] & yhat_mat[,1] > yhat_mat[,2]) 
+
+# Quantiles to determine 
+quantile(not_fatal_probs, prob = .99)
+quantile(fatal_probs, prob = .7)
+
+
+
 ```
+
+# Binary classification based on fatal
+
 ```{r}
+library(xgboost)
+data = orig_data
+data$CrashSeverity = ifelse(data$CrashSeverity == 'Property Damage',"No Injury","Injury")
+data$CrashSeverity = as.factor(data$CrashSeverity)
+
+label_factor <- factor(data[,1])                 
+labels <- as.integer(label_factor) - 1            
+label_levels <- levels(label_factor)              
+
+
+# 2. Extract and encode features
+features <- data[, -1]
+features_mat <- model.matrix(~., features)[, -1]
+
+
+# 3. Split into train/test
+train_x <- features_mat[train.inds, ]
+train_y <- labels[train.inds]
+
+test_x <- features_mat[-train.inds, ]
+test_y <- labels[-train.inds]
+
+
+# 4. Create DMatrix
+train.xgb <- xgb.DMatrix(data = train_x, label = train_y)
+test.xgb <- xgb.DMatrix(data = test_x)
+dim(test.xgb)
+# 5. Train
+params <- list(
+  booster = "gbtree",
+  objective = "binary:logistic",
+  eval_metric = "auc",
+  nthread = 16,
+  scale_pos_weight = sum(train_y == 0) / sum(train_y == 1)
+)
+# cv.model.xgb <- xgb.cv(
+#   params = params,
+#   data = train.xgb,
+#   nfold = 5,
+#   nrounds = 100,
+#   verbose = 1,
+#   prediction = TRUE
+# )
+
+final.xgb <- xgb.train(
+  params = params,
+  data = train.xgb,
+  nrounds = 65
+)
+
+# Predicted values based on most probable outcome
+yhats_probs = predict(final.xgb, test.xgb)
+
+yhats <- ifelse(yhats_probs > 0.5, 1, 0) 
+
+
+# 7. Convert numeric predictions back to original labels
+predicted_labels <- label_levels[yhats + 1]        
+actual_labels <- label_levels[test_y + 1]
+
+# 8. Evaluate
+table(predicted = predicted_labels, actual = actual_labels)
+get_weighted_f1(factor(predicted_labels), factor(actual_labels))
+
+thresholds <- seq(0.1, 0.9, by = 0.01)
+f1_scores <- sapply(thresholds, function(thresh) {
+  preds <- ifelse(yhats_probs > thresh, 1, 0)
+  F1_Score(y_pred = preds, y_true = test_y, positive = "0")
+})
+f1_scores
 
 ```
-
-
-```{r}
-library(ROSE)
-balanced_data <- ovun.sample(target ~ ., data = your_data, method = "over", N = 10000)$data
-# 
-```
-
-

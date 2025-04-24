@@ -1,0 +1,866 @@
+---
+title: "Dpa_data_preprocessing"
+author: "Bharath Srinivas SR"
+date: "2025-04-13"
+output: html_document
+---
+
+Note: See for Route Numbers:
+
+```{r}
+# Importing the CSV file
+crash_data <- read.csv("crash_2022.csv", header = TRUE)
+
+# View the first few rows of the dataset
+head(crash_data)
+
+dim(crash_data)
+
+```
+
+We will now take a count on the missing values present in the dataset
+
+```{r}
+
+missing_per_column <- colSums(is.na(crash_data))
+print(missing_per_column)
+
+```
+Given that the AlignmentCode column has almost all values missing (298,324 out of 298,431 rows), and ClassOfTrafficwayCode has all missing ,we will drop them both.
+
+
+```{r}
+# Count the number of "(UNK)" values in each column
+unknown_counts <- sapply(crash_data, function(col) sum(col == "(UNK)", na.rm = TRUE))
+
+# Filter only columns that have at least one "(UNK)"
+unknown_counts <- unknown_counts[unknown_counts > 0]
+
+# Print the result
+print(unknown_counts)
+```
+NumberOfLanes, RoadAlignment,RouteNumber and AccessControl can be removed. Flow condition, Roadway functional class shouldn't be removed because important for analysisng dataset.
+
+```{r}
+
+library(dplyr)
+
+# Drop both ClassOfTrafficwayCode and AlignmentCode columns
+clean_data <- crash_data %>% select(-ClassOfTrafficwayCode, -AlignmentCode,-NumberOfLanes, -RoadAlignment,-AccessControl,-RouteNumber)
+dim(clean_data)
+```
+
+```{r}
+missing_per_column <- colSums(is.na(clean_data))
+print(missing_per_column)
+```
+
+```{r}
+# Count the number of "(UNK)" values in each column
+unknown_counts <- sapply(clean_data, function(col) sum(col == "(UNK)", na.rm = TRUE))
+
+# Filter only columns that have at least one "(UNK)"
+unknown_counts <- unknown_counts[unknown_counts > 0]
+
+# Print the result
+print(unknown_counts)
+```
+
+0.0017 % of the dataset 517- we drop rows with (UNK) ClassOfTrafficway,UrbanRural,DidInvolveSecondaryCrash,WorkZone
+
+We will now drop rows( apart from RouteNumber ) which have minimal missing values
+
+columns with relatively few missing values include:
+
+RoadwayFunctionalClassCode (198 missing values)
+
+DamagedProperty1 (1 missing value)
+
+DamagedProperty2 (5 missing values)
+
+TSCrashLatitude and TSCrashLongitude (533 missing values each)
+
+```{r}
+clean_data <- clean_data %>%
+  filter(
+    ClassOfTrafficway != "(UNK)",
+    UrbanRural != "(UNK)",
+    DidInvolveSecondaryCrash != "(UNK)",
+    WorkZone != "(UNK)",
+    AgencyReportNumber!="(UNK)"
+  )
+
+clean_data <- clean_data %>%
+  filter(
+    !is.na(TSCrashLatitude),
+    !is.na(TSCrashLongitude),
+    !is.na(DamagedProperty1),
+    !is.na(AgencyReportYear)
+  )
+dim(clean_data)
+# Count the number of "(UNK)" values in each column
+unknown_counts <- sapply(clean_data, function(col) sum(col == "(UNK)", na.rm = TRUE))
+
+# Filter only columns that have at least one "(UNK)"
+unknown_counts <- unknown_counts[unknown_counts > 0]
+
+# Print the result
+print(unknown_counts)
+```
+
+CAN'T DIRECTLY DROP ROADWAY FUNCTIONAL CLASSES:
+```{r}
+library(ggplot2)
+# Plot distribution of Roadway Functional Classes
+clean_data %>%
+  count(RoadwayFunctionalClass, sort = TRUE) %>%
+  mutate(RoadwayFunctionalClass = factor(RoadwayFunctionalClass, levels = rev(RoadwayFunctionalClass))) %>%
+  ggplot(aes(x = RoadwayFunctionalClass, y = n)) +
+  geom_bar(stat = "identity", fill = "darkcyan") +
+  labs(title = "Crash Counts by Roadway Functional Class",
+       x = "Roadway Functional Class",
+       y = "Number of Crashes") +
+  theme_minimal(base_size = 13) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+        plot.title = element_text(hjust = 0.5)) +
+  geom_text(aes(label = n), hjust = -0.1, size = 4) +
+  coord_flip()
+
+```
+
+
+Interstate- Major highways/freeways (I-55, I-90, etc.), designed for high-speed travel
+Principal Arterial- Key roads connecting major centers; high traffic volumes
+Minor Arterial- Connects smaller cities or neighborhoods; moderate traffic
+Major Collector - Gathers traffic from local streets to arterial roads
+Minor Collector	- Feeds into major collectors; lower speeds and traffic
+Local - or Local Road	Residential or small local access roads
+(UNK)	- Unknown or not classified — often used when info is missing
+
+They haven't recorded it properly there are too many (UNK).
+
+Trying to solve this problem by looking a the other columns.
+```{r}
+unique(clean_data$Toll)
+unique(clean_data$UrbanRural)
+unique(clean_data$FlowCondition)
+```
+
+So we make the following assumptions using the other columns to get a better plot:
+We used Toll == "Illinois Toll Highway Com" and gave it "Interstate" because this directly represents Illinois’ toll-operated interstate highways.
+We used Toll == "No Toll" or "Not Toll" and gave it "Principal Arterial" because non-toll roads are generally public through-routes, often designed to handle moderate to high traffic regardless of area type.
+We used UrbanRural == "URBAN" and FlowCondition == "Free Flow" and gave it "Principal Arterial" because fast-moving traffic in cities suggests high-capacity arterial roads.
+We used UrbanRural == "URBAN" and FlowCondition == "Slow" and gave it "Major Collector" because slow traffic in urban areas often indicates moderately busy collector roads.
+We used UrbanRural == "URBAN" and FlowCondition == "Stopped" and gave it "Minor Arterial" because stopped traffic in cities often occurs on important but lower-tier roads.
+We used UrbanRural == "RURAL" and FlowCondition == "Stopped" and gave it "Major Collector" because heavy use in rural areas points to key connecting roads.
+We used UrbanRural == "RURAL" and FlowCondition == "Slow" and gave it "Minor Collector" because these roads tend to be small, secondary routes in rural regions.
+We used FlowCondition == "No" and gave it "Local" because the absence of traffic data likely indicates low-traffic local roads.
+We used TRUE and gave it "(UNK)" because none of the defined conditions matched, so we conservatively left it unknown.
+
+```{r}
+# Plotting again
+library(dplyr)
+
+clean_data <- clean_data %>%
+  mutate(RoadwayFunctionalClass = case_when(
+    RoadwayFunctionalClass != "(UNK)" ~ RoadwayFunctionalClass,
+    Toll == "Illinois Toll Highway Com" ~ "Interstate",
+    Toll == "No Toll" | Toll=="Not Toll" ~ "Other Principal Arterial",
+    UrbanRural == "Urban" & FlowCondition == "Free Flow" ~ "Principal Arterial",
+    UrbanRural == "Urban" & FlowCondition == "Slow" ~ "Major Collector",
+    UrbanRural == "Urban" & (FlowCondition == "Stopped" |FlowCondition =="Slow") ~ "Minor Arterial",
+    UrbanRural == "Rural" & FlowCondition == "Stopped" ~ "Major Collector",
+    UrbanRural == "Rural" & FlowCondition == "Slow" ~ "Minor Collector",
+    TRUE ~ "(UNK)"
+  ))
+
+clean_data %>%
+  count(RoadwayFunctionalClass, sort = TRUE) %>%
+  mutate(RoadwayFunctionalClass = factor(RoadwayFunctionalClass, levels = rev(RoadwayFunctionalClass))) %>%
+  ggplot(aes(x = RoadwayFunctionalClass, y = n)) +
+  geom_bar(stat = "identity", fill = "darkcyan") +
+  labs(title = "Crash Counts by Roadway Functional Class",
+       x = "Roadway Functional Class",
+       y = "Number of Crashes") +
+  theme_minimal(base_size = 13) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+        plot.title = element_text(hjust = 0.5)) +
+  geom_text(aes(label = n), hjust = -0.1, size = 4) +
+  coord_flip()
+```
+
+
+
+```{r}
+library(dplyr)
+
+# Fill missing Cause1 and Cause2 from each other
+clean_data <- clean_data %>%
+  mutate(
+    Cause1 = ifelse((is.na(Cause1) | Cause1 == "") & !is.na(Cause2) & Cause2 != "", Cause2, Cause1),
+    Cause2 = ifelse((is.na(Cause2) | Cause2 == "") & !is.na(Cause1) & Cause1 != "", Cause1, Cause2)
+  )
+
+# Get top 5 causes
+cause1_top <- clean_data %>%
+  count(Cause1, sort = TRUE) %>%
+  slice_max(n, n = 5)
+
+cause2_top <- clean_data %>%
+  count(Cause2, sort = TRUE) %>%
+  slice_max(n, n = 5)
+
+# Set plotting layout: one below the other
+par(mfrow = c(2, 1), mar = c(5, 12, 4, 2))
+
+# Plot 1: Cause1
+barplot(cause1_top$n,
+        names.arg = cause1_top$Cause1,
+        main = "Top 5 Causes (Cause1)",
+        col = "tomato",
+        xlab = "Number of Crashes",
+        horiz = TRUE,
+        las = 1)
+
+# Plot 2: Cause2
+barplot(cause2_top$n,
+        names.arg = cause2_top$Cause2,
+        main = "Top 5 Causes (Cause2)",
+        col = "tomato",
+        xlab = "Number of Crashes",
+        horiz = TRUE,
+        las = 1)
+
+```
+
+```{r}
+sum(clean_data$Cause2 == "(N/A)", na.rm = TRUE)
+```
+
+Too many NA values so this column can be dropped.
+```{r}
+clean_data <- clean_data %>% select(-Cause2)
+dim(clean_data)
+```
+
+Let us start with EDA now.(havent dealt with routeNumber coulumn yet)
+
+
+## Summary Statistics 
+
+```{r}
+summary(clean_data)
+
+```
+
+```{r}
+
+str(clean_data)
+
+
+```
+
+### Missing Data analysis
+
+```{r}
+colSums(is.na(clean_data))
+
+```
+
+### Distribution Analysis
+
+####Numerical Variables
+
+Let us understand the distribution of numerical features.
+
+We will plot histograms for numerical variables to observe their distributions:
+
+```{r}
+#increase size
+#install.packages("reshape2")
+library(ggplot2)
+library(reshape2)
+
+# Melt the dataset for plotting
+numeric_cols <- sapply(clean_data, is.numeric)
+melted_data <- melt(clean_data[, numeric_cols])
+
+# Create histogram plots with adjusted layout
+ggplot(melted_data, aes(value)) +
+  geom_histogram(fill = "steelblue", color = "black") +
+  facet_wrap(~variable, ncol = 2, scales = "free") +  # Set 2 columns
+  labs(title = "Distribution of Numerical Variables", x = "Value", y = "Count")
+```
+### Correlation Analysis
+
+####Numerical Variables
+
+#####Let us identify relationships between numerical features and the target variable (CrashSeverityCd).
+
+
+```{r}
+unique(clean_data$CrashInjurySeverity)
+```
+
+### Strong correlation numerical columns with CrashInjurySeverity:
+```{r}
+library(dplyr)
+
+# Step 1: Filter numeric columns
+numeric_cols <- sapply(clean_data, is.numeric)
+numeric_data <- clean_data[, numeric_cols]
+
+# Step 2: Remove columns with zero variance
+numeric_data <- numeric_data[, sapply(numeric_data, function(col) sd(col, na.rm = TRUE) != 0)]
+
+# Step 3: Compute correlation matrix
+cor_matrix <- cor(numeric_data, use = "complete.obs")
+
+# Step 4: Identify columns with correlation > 0.6 with any other column (excluding self-correlation)
+high_corr_columns <- colnames(cor_matrix)[
+  apply(cor_matrix, 2, function(x) any(abs(x[!is.na(x) & names(x) != names(x)[which.max(abs(x))]]) > 0.6))
+]
+
+# Step 5: Print the selected column names
+cat("Columns with at least one strong correlation (|r| > 0.6) with any other column:\n")
+print(high_corr_columns)
+
+# Step 6: Get correlation with CrashInjurySeverity only (if it exists)
+if ("CrashInjurySeverity" %in% rownames(cor_matrix)) {
+  target_cor <- cor_matrix["CrashInjurySeverity", ]
+  
+  # Remove self-correlation and filter those above threshold
+  high_corr_with_target <- target_cor[abs(target_cor) > 0.6 & names(target_cor) != "CrashInjurySeverity"]
+  
+  # Print
+  cat("\nNumeric columns with |correlation| > 0.6 with CrashInjurySeverity:\n")
+  print(high_corr_with_target)
+} else {
+  cat("\nCrashInjurySeverity is not in the correlation matrix.\n")
+}
+```
+### strong Correlation categorical columns with CrashInjurySeverity:
+```{r}
+library(dplyr)
+
+# Identify categorical columns
+categorical_cols <- sapply(clean_data, function(col) is.character(col) || is.factor(col))
+
+# Run Fisher’s test if needed, otherwise use Chi-squared
+significant_vars <- lapply(names(clean_data)[categorical_cols], function(var) {
+  if (var != "CrashInjurySeverity") {
+    tbl <- table(clean_data[[var]], clean_data$CrashInjurySeverity)
+    test <- tryCatch({
+      if (all(dim(tbl) <= 5)) {
+        fisher.test(tbl)
+      } else {
+        chisq.test(tbl)
+      }
+    }, error = function(e) return(NULL))
+    
+    if (!is.null(test) && inherits(test, "htest") && test$p.value < 0.05) {
+      return(var)
+    }
+  }
+  return(NULL)
+})
+
+significant_vars <- unlist(significant_vars)
+cat("✅ Reliable variables with p < 0.05 (Chi-sq or Fisher’s Exact Test):\n")
+print(significant_vars)
+```
+
+#Strong correlation numerical columns with CrashSeverity:
+```{r}
+library(dplyr)
+
+# Step 1: Filter numeric columns
+numeric_cols <- sapply(clean_data, is.numeric)
+numeric_data <- clean_data[, numeric_cols]
+
+# Step 2: Remove columns with zero variance
+numeric_data <- numeric_data[, sapply(numeric_data, function(col) sd(col, na.rm = TRUE) != 0)]
+
+# Step 3: Compute correlation matrix
+cor_matrix <- cor(numeric_data, use = "complete.obs")
+
+# Step 4: Identify columns with correlation > 0.6 with any other column (excluding self-correlation)
+high_corr_columns <- colnames(cor_matrix)[
+  apply(cor_matrix, 2, function(x) any(abs(x[!is.na(x) & names(x) != names(x)[which.max(abs(x))]]) > 0.6))
+]
+
+# Step 5: Print the selected column names
+cat("Columns with at least one strong correlation (|r| > 0.6) with any other column:\n")
+print(high_corr_columns)
+
+# Step 6: Get correlation with CrashInjurySeverity only (if it exists)
+if ("CrashInjurySeverity" %in% rownames(cor_matrix)) {
+  target_cor <- cor_matrix["CrashSeverity", ]
+  
+  # Remove self-correlation and filter those above threshold
+  high_corr_with_target <- target_cor[abs(target_cor) > 0.6 & names(target_cor) != "CrashSeverity"]
+  
+  # Print
+  cat("\nNumeric columns with |correlation| > 0.6 with CrashSeverity:\n")
+  print(high_corr_with_target)
+} else {
+  cat("\nCrashSeverity is not in the correlation matrix.\n")
+}
+```
+#Strong correlation categorical columns with CrashSeverity:
+```{r}
+library(dplyr)
+
+# Identify categorical columns
+categorical_cols <- sapply(clean_data, function(col) is.character(col) || is.factor(col))
+
+# Run Fisher’s test if needed, otherwise use Chi-squared
+significant_vars <- lapply(names(clean_data)[categorical_cols], function(var) {
+  if (var != "CrashSeverity") {
+    tbl <- table(clean_data[[var]], clean_data$CrashSeverity)
+    test <- tryCatch({
+      if (all(dim(tbl) <= 5)) {
+        fisher.test(tbl)
+      } else {
+        chisq.test(tbl)
+      }
+    }, error = function(e) return(NULL))
+    
+    if (!is.null(test) && inherits(test, "htest") && test$p.value < 0.05) {
+      return(var)
+    }
+  }
+  return(NULL)
+})
+
+significant_vars <- unlist(significant_vars)
+cat("Reliable variables with p < 0.05 (Chi-sq or Fisher’s Exact Test):\n")
+print(significant_vars)
+```
+
+#Combining all the columns:
+```{r}
+selected_columns <- c(
+  "X", "Y", "ICN", "CrashID", "CrashMonth", "CityCode", "CityClassCode", 
+  "TotalInjured", "BInjuries", "CInjuries", "TSCrashCoordinateX", "TSCrashLatitude", "TSCrashLongitude", 
+  "CrashSeverityCd", "CrashInjurySeverity", "CrashSeverity",
+  
+  "Township", "RailroadCrossingNumber", "TimeOfCrash", "CrashDate", 
+  "CrashReportCounty", "DayOfWeek", "TypeOfFirstCrash", "CityName", 
+  "CityClass", "ClassOfTrafficway", "Cause1", "TrafficControlDevice", 
+  "TrafficControlDeviceCond", "RoadSurfaceCond", "RoadDefects", 
+  "LightingCond", "WeatherCond", "TrafficwayDescrip", 
+  "RoadwayFunctionalClass", "DamagedProperty1", "DamagedProperty2", 
+  "AgencyReportNumber"
+)
+
+# Create a filtered dataset
+clean_data_filter <- clean_data[, selected_columns]
+head(clean_data_filter)
+dim(clean_data_filter)
+```
+
+Note: Remove BInjuries,CInjuries why- one hot for binjury can be done in model development
+TScrashCoordinateX,TSCrashLatitude,TSCrashLongitude- because highly correlate with "X", "Y".
+Removing ICN because it is unique identification for each crash report so plays the same role as CrashID.
+Removing DamagedProperty2 because similar to Damaged property1 and most values are empty
+Removing RailroadCrossingNumber mostly values are N/A.
+AgencyReportNumber- Not much important as we are already taking county into account.
+
+```{r}
+# Columns to remove
+selected_columns <- c("BInjuries", "TSCrashCoordinateX", "TSCrashLatitude", "TSCrashLongitude", "ICN","DamagedProperty2","CInjuries","RailroadCrossingNumber","AgencyReportNumber")
+
+# Remove them from the dataframe
+clean_data_filter <- clean_data_filter[, setdiff(names(clean_data_filter), selected_columns)]
+
+# Check the updated dimensions or preview
+dim(clean_data_filter)
+head(clean_data_filter)
+```
+```{r}
+#write.csv(clean_data_filter, "clean_data_filter.csv", row.names = FALSE)
+```
+
+
+####Numerical Features vs Target Variable
+
+We will explore how numerical features relate to crash severity.
+
+
+
+Will use boxplots or scatterplots for key numerical features  vs CrashSeverity:
+
+```{r}
+ggplot(clean_data_filter, aes(x = CrashSeverity, y = CrashMonth)) +
+  geom_boxplot() +
+  labs(title = " Crash Severity by Months")
+```
+
+#### Categorical Features vs Target Variable
+we will analyze how categorical features influence crash severity.
+
+```{r}
+ggplot(clean_data_filter, aes(x = CrashSeverity, fill =WeatherCond)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Weather Conditions vs Crash Severity")
+
+```
+```{r}
+ggplot(clean_data_filter, aes(x = CrashSeverity, fill =RoadSurfaceCond)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Road Conditions vs Crash Severity")
+```
+
+
+```{r}
+colnames(clean_data_filter)
+```
+#### Feature importance
+
+we can do some preliminary steps to have an idea on some of the important predictors for crash severity
+
+
+```{r}
+# Select numeric columns
+numeric_vars <- clean_data_filter %>% select(where(is.numeric))
+
+# Correlation matrix
+cor_matrix <- cor(numeric_vars, use = "complete.obs")
+
+# Visualize
+library(corrplot)
+corrplot(cor_matrix, method = "color", tl.cex = 0.7)
+```
+
+
+```{r}
+library(lubridate)
+
+# If the column is still character
+clean_data_filter$CrashDate <- as.character(clean_data_filter$CrashDate)
+
+# Parse the datetime with timezone
+clean_data_filter$CrashDate <- ymd_hms(clean_data_filter$CrashDate, tz = "UTC")
+
+# Split into Date and Time
+clean_data_filter$CrashDate_only <- as.Date(clean_data_filter$CrashDate)
+clean_data_filter$CrashTime_only <- format(clean_data_filter$CrashDate, "%H:%M:%S")
+# Step 1: Replace CrashDate with CrashDate_only
+clean_data_filter$CrashDate <- clean_data_filter$CrashDate_only
+
+# Step 2: Remove CrashDate_only and CrashTime_only
+clean_data_filter$CrashDate_only <- NULL
+clean_data_filter$CrashTime_only <- NULL
+```
+
+```{r}
+library(dplyr)
+
+clean_data_filter <- clean_data_filter %>%
+  arrange(CrashDate)
+```
+
+```{r}
+head(clean_data_filter)
+```
+
+```{r}
+mappings <- list(
+  CrashInjurySeverity = levels(as.factor(clean_data_filter$CrashInjurySeverity)),
+  RoadwayFunctionalClass = levels(as.factor(clean_data_filter$RoadwayFunctionalClass)),
+  WeatherCond = levels(as.factor(clean_data_filter$WeatherCond)),
+  LightingCond = levels(as.factor(clean_data_filter$LightingCond)),
+  RoadSurfaceCond = levels(as.factor(clean_data_filter$RoadSurfaceCond))
+)
+
+print(mappings$CrashInjurySeverity)
+print(mappings$RoadwayFunctionalClass)
+print(mappings$LightingCond)
+print(mappings$WeatherCond)
+print(mappings$RoadSurfaceCond)
+```
+getting rid of the columns now after
+```{r}
+# Label encode and create new columns
+clean_data_filter$CrashInjurySeverityCond <- as.numeric(as.factor(clean_data_filter$CrashInjurySeverity))
+clean_data_filter$RoadwayFunctionalClassCond <- as.numeric(as.factor(clean_data_filter$RoadwayFunctionalClass))
+clean_data_filter$WeatherCondCond <- as.numeric(as.factor(clean_data_filter$WeatherCond))
+clean_data_filter$LightingCondCond <- as.numeric(as.factor(clean_data_filter$LightingCond))
+clean_data_filter$RoadSurfaceCondCond <- as.numeric(as.factor(clean_data_filter$RoadSurfaceCond))
+```
+
+```{r}
+# Ensure CrashDate is of Date type
+clean_data_filter$CrashDate <- as.Date(clean_data_filter$CrashDate)
+
+# Filter rows where CrashDate is on or before 30 June 2022
+clean_data <- clean_data_filter %>%
+  filter(CrashDate <= as.Date("2022-06-30"))
+
+# Save to CSV
+#write.csv(clean_data_before_cutoff, "clean_dataBeforeFS_new.csv", row.names = FALSE)
+```
+
+```{r}
+# Ensure CrashDate is of Date type
+dim(clean_data)
+head(clean_data)
+```
+##Feature Selection:
+```{r}
+# Convert Township to numeric using factor encoding
+clean_data $Township <- as.numeric(as.factor(clean_data $Township))
+```
+
+#only works on Numerical columns the best.
+```{r}
+# Take first 50,000 rows as before
+data <- clean_data
+
+# Add numeric response
+data$Y <- as.numeric(as.factor(data$CrashSeverity))
+
+# Drop the original target and non-numeric columns
+data$CrashSeverity <- NULL
+
+# Keep only numeric columns (including Y)
+numeric_data <- data[, sapply(data, is.numeric)]
+```
+
+#Forward
+
+```{r}
+library(leaps)
+
+regfit.fwd <- regsubsets(Y ~ ., data = numeric_data, nvmax = 8, method = "forward")
+summary_fwd <- summary(regfit.fwd)
+```
+
+```{r}
+best_features <- summary_fwd$which[which.max(summary_fwd$adjr2), ]
+selected_vars <- names(best_features[best_features == TRUE])
+selected_vars <- selected_vars[selected_vars != "(Intercept)"]
+
+print(selected_vars)
+```
+#Backward Selection:
+
+
+```{r}
+library(leaps)
+
+# Run backward selection
+regfit.bwd <- regsubsets(Y ~ ., data = numeric_data, nvmax = 8, method = "backward")
+
+# Get summary
+summary_bwd <- summary(regfit.bwd)
+```
+
+```{r}
+best_bwd <- summary_bwd$which[which.max(summary_bwd$adjr2), ]
+selected_bwd_vars <- names(best_bwd[best_bwd == TRUE])
+selected_bwd_vars <- selected_bwd_vars[selected_bwd_vars != "(Intercept)"]
+print(selected_bwd_vars)
+```
+
+Gave same results for both, so moving forward with these 6 numerical columns and all the rest categorical columns.
+
+# ridge Lasso:
+```{r}
+# Load required libraries
+library(glmnet)
+
+# Step 2: Prepare x (features) and y (response)
+x <- as.matrix(numeric_data[, setdiff(names(numeric_data), "Y")])
+y <- numeric_data$Y
+```
+
+#ridge:
+```{r}
+# Fit Ridge with cross-validation
+ridge_cv <- cv.glmnet(x, y, alpha = 0)
+
+# Coefficients at best lambda
+ridge_coef <- coef(ridge_cv, s = "lambda.min")
+print("Ridge selected features:")
+print(ridge_coef[ridge_coef[,1] != 0, , drop=FALSE])
+```
+Based on Ridge regression coefficients, the top 8 selected numeric features are: CrashSeverityCd, CrashInjurySeverity, TotalInjured, CityClassCode, WeatherCondCond, RoadSurfaceCondCond, CrashMonth and RoadwayFunctionalClassCond.
+
+#Lasso:
+```{r}
+# Fit Lasso with cross-validation
+lasso_cv <- cv.glmnet(x, y, alpha = 1)
+
+# Coefficients at best lambda
+lasso_coef <- coef(lasso_cv, s = "lambda.min")
+print("Lasso selected features:")
+print(lasso_coef[lasso_coef[,1] != 0, , drop=FALSE])
+```
+Similar to previous.
+So taking only the top 8 features from the numerical column and also crashID as it is imp
+
+#new dataset:
+```{r}
+# === Step 1: Define the numeric columns you want to keep ===
+selected_numeric_cols <- c(
+  "CrashSeverityCd",
+  "CrashInjurySeverity",
+  "TotalInjured",
+  "CityClassCode",
+  "CrashMonth"
+)
+
+# === Step 2: Get all categorical columns from original data ===
+categorical_cols <- names(clean_data)[sapply(clean_data, function(col) is.factor(col) || is.character(col))]
+
+# === Step 3: Combine numeric and categorical columns ===
+final_columns <- union(selected_numeric_cols, categorical_cols)
+
+# === Step 4: Remove unwanted encoded columns ===
+columns_to_exclude <- c("RoadwayFunctionalClassCond", "WeatherCondCond", "LightingCondCond", "RoadSurfaceCondCond")
+
+final_columns <- setdiff(final_columns, columns_to_exclude)
+
+# === Step 5: Create final dataframe ===
+final_df <- clean_data[, final_columns]
+
+# === Step 6: Check structure ===
+str(final_df)
+dim(final_df)
+
+```
+
+```{r}
+# Save the final dataframe to a CSV file
+
+write.csv(final_df, "final_dataset.csv", row.names = FALSE)
+```
+
+EDA:
+```{r}
+# Step 1: Create labels for months
+month_labels <- c("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+# Step 2: Prepare data tables
+month_counts <- table(final_df$CrashMonth)
+names(month_counts) <- month_labels[as.numeric(names(month_counts))]
+
+road_counts <- table(final_df$RoadSurfaceCond)
+weather_counts <- table(final_df$WeatherCond)
+
+# Step 3: Set layout for 3 plots side-by-side
+par(mfrow = c(1, 3), mar = c(6, 5, 4, 2))
+
+# Plot 1: Crash by Month
+barplot(month_counts,
+        main = "Crash Counts by Month",
+        col = "steelblue",
+        ylab = "Number of Crashes",
+        las = 2)
+
+# Plot 2: Crash by Road Surface Condition
+barplot(road_counts,
+        main = "By Road Surface Condition",
+        col = "darkgreen",
+        ylab = "Number of Crashes",
+        las = 2)
+
+# Plot 3: Crash by Weather Condition
+barplot(weather_counts,
+        main = "By Weather Condition",
+        col = "darkorange",
+        ylab = "Number of Crashes",
+        las = 2)
+
+```
+
+Most accidents happened in the month of October and are higher in the months of Nov,dec mostly because of Snow?(Why?), most of the time the codition was clear.
+
+```{r}
+library(ggplot2)
+library(lubridate)
+library(dplyr)
+
+# Ensure TimeOfCrash is properly parsed as a time object
+final_df <- final_df %>%
+  mutate(TimeOfCrash = hms::as_hms(TimeOfCrash)) %>%  # <--- FIX: convert to time
+  mutate(TimeCategory = case_when(
+    hour(TimeOfCrash) >= 6  & hour(TimeOfCrash) < 12 ~ "Morning",
+    hour(TimeOfCrash) >= 12 & hour(TimeOfCrash) < 15 ~ "Afternoon",
+    hour(TimeOfCrash) >= 15 & hour(TimeOfCrash) < 18 ~ "Evening",
+    TRUE ~ "Night"
+  ))
+
+
+# Plot 1: Time of Day
+barplot(time_counts,
+        main = "Crash Counts by Time of Day",
+        col = "darkorange",
+        ylab = "Number of Crashes",
+        las = 2)
+
+```
+It's surprising to se most of the accidents in Illinois happen in Morning/daylight.
+
+```{r}
+#for Type of First accident
+library(ggplot2)
+library(dplyr)
+
+# Plot: Type of First Crash
+final_df %>%
+  count(TypeOfFirstCrash, sort = TRUE) %>%
+  mutate(TypeOfFirstCrash = factor(TypeOfFirstCrash, levels = rev(unique(TypeOfFirstCrash)))) %>%
+  ggplot(aes(x = TypeOfFirstCrash, y = n)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "Crash Counts by Type of First Crash",
+       x = "Type of First Crash",
+       y = "Number of Crashes") +
+  theme_minimal(base_size = 13) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+        plot.title = element_text(hjust = 0.5)) +
+  geom_text(aes(label = n), hjust = -0.1, size = 3) +
+  coord_flip()  # Makes it horizontal for readability
+
+```
+
+```{r}
+#top 10 Cities with most accidents
+library(dplyr)
+library(ggplot2)
+
+# Step 1: Count crashes by city and keep top 10
+top_cities <- final_df %>%
+  count(CityName, sort = TRUE) %>%
+  slice_max(n, n = 10)
+
+# Step 2: Plot
+top_cities %>%
+  mutate(CityName = factor(CityName, levels = rev(CityName))) %>%
+  ggplot(aes(x = CityName, y = n)) +
+  geom_bar(stat = "identity", fill = "firebrick") +
+  labs(title = "Top 10 Cities with Most Crashes",
+       x = "City",
+       y = "Number of Crashes") +
+  theme_minimal(base_size = 10) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+        plot.title = element_text(hjust = 0.5)) +
+  geom_text(aes(label = n), hjust = -0.1, size = 4) +
+  coord_flip()  # Horizontal bar chart for readability
+```
+Chicago has the mosr accidents. with a very high rate when compared to the other cities
+
+
+### After completing EDA, we know a lot of details of our dataset like:
+
+Key distributions (numerical and categorical).
+
+Missing data patterns and decisions made.
+
+Correlations between features and the target variable.
+
+Relationships between predictors and crash severity
+
