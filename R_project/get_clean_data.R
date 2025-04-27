@@ -1,10 +1,12 @@
 library(dplyr)
 library(stringr)
 
-get_clean_data = function() {
+get_clean_data = function(df = NULL) {
   # Accessing Dataset
-  csv_data = as.data.frame(read.csv(here::here("final_dataset.csv")))
-  unclean_data = csv_data
+  if (is.null(df)) {
+    df = as.data.frame(read.csv(here::here("final_dataset_test.csv")))
+  }
+  unclean_data = df
   
   unclean_data$DamagedProperty = as.factor(get_prop_damage_cats(unclean_data$DamagedProperty1))
   
@@ -13,25 +15,29 @@ get_clean_data = function() {
                                "Unable to Determine", unclean_data$Cause1)
   
   # Drops CrashSeverityCD and CrashInjurySeverity as they have collinearity with CrashSeverity
-  unclean_data = unclean_data[,-c(1,2)]
+  
   
   # Swapping CrashSeverity to first column
   unclean_data = unclean_data[, c("CrashSeverity", "TotalInjured", 
                                   setdiff(names(unclean_data), 
                                           c("TotalInjured", "CrashSeverity")))]
   
-  # This drops TimeOfCrash and DamagedProperty1. These variables need to be fixed to conduct analysis on. 
-  unclean_data = unclean_data[,!colnames(unclean_data) %in% c("DamagedProperty1","CityClassCode","CityName","CityClassCode","CrashReportCounty","TotalInjured","TrafficControlDeviceCond","ClassOfTrafficway")] 
+  # This drops certain variables. These variables need to be fixed to conduct analysis on. 
+  unclean_data = unclean_data[,!colnames(unclean_data) %in% c("DamagedProperty1","CityClassCode",
+                                                              "CityName","CityClassCode",
+                                                              "CrashReportCounty","TrafficControlDeviceCond",
+                                                              "ClassOfTrafficway","TimeOfCrash",
+                                                              "CrashSeverityCd")] 
   
-  unclean_data$TimeOfCrash = as.numeric(sapply(strsplit(time,":"), function(x) x[1]))
-  
-  colnames(unclean_data)[colnames(unclean_data) == "TimeOfCrash"] = "HourOfCrash"
+  # unclean_data$TimeOfCrash = as.numeric(sapply(strsplit(unclean_data$TimeOfCrash,":"), function(x) x[1]))
+  # 
+  # colnames(unclean_data)[colnames(unclean_data) == "TimeOfCrash"] = "HourOfCrash"
   
   orig_data = unclean_data
   
   cols = colnames(orig_data)
   
-  num_vars = c("CrashSeverityCd","CityClassCode","TotalInjured")
+  num_vars = c("TotalInjured")
   
   for (i in 1:length(orig_data)) {
     if (!colnames(orig_data)[i] %in% num_vars) {
