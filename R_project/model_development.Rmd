@@ -20,6 +20,7 @@ library(xgboost)
 library(synthpop)
 library(ranger)
 library(MLmetrics)
+library(doParallel)
 ```
 
 ## Loading Data
@@ -139,6 +140,10 @@ ctrl <- trainControl(method = "cv", number = 5)  # 5-fold CV
 ### Linear Cross-Validation and Hyperparameter tuning
 
 ```{r}
+n_cores <- parallel::detectCores()
+
+cl <- makePSOCKcluster(n_cores - 1)  # Leave 1 core free to keep system responsive
+registerDoParallel(cl)
 
 grid <- expand.grid(
   cost = c(0.1, 1, 10)        
@@ -154,11 +159,23 @@ svm.cv.linear <- train(
 
 svm.cv.linear
 
+stopCluster(cl)
+registerDoSEQ()
+
 ```
+
+
+Accuracy was used to select the optimal model using the largest value.
+The final value used for the model was cost = 0.1.
 
 ### Radial Cross-Validation and Hyperparameter tuning
 
 ```{r}
+n_cores <- parallel::detectCores()
+
+cl <- makePSOCKcluster(n_cores - 1)  # Leave 1 core free to keep system responsive
+registerDoParallel(cl)
+
 grid <- expand.grid(
   C = c(0.1, 1, 10),        
   sigma = c(0.0001, 0.001, 0.01)
@@ -174,16 +191,26 @@ svm.cv.rad <- train(
 
 svm.cv.rad
 
-```
+stopCluster(cl)
+registerDoSEQ()
 
+```
+Accuracy was used to select the optimal model using the largest value.
+The final values used for the model were sigma = 0.01 and C = 1
 
 ### Radial-Weighted Cross-Validation and Hyperparameter tuning
 
 ```{r}
+n_cores <- parallel::detectCores()
+
+cl <- makePSOCKcluster(n_cores - 1)  # Leave 1 core free to keep system responsive
+registerDoParallel(cl)
+
 
 grid <- expand.grid(
   C = c(0.1, 1, 10),        
   sigma = c(0.0001, 0.001, 0.01)
+
 )
 
 svm.cv.rad.w <- train(
@@ -196,6 +223,9 @@ svm.cv.rad.w <- train(
 
 svm.cv.rad.w
 
+stopCluster(cl)
+registerDoSEQ()
+
 ```
 
 
@@ -203,8 +233,16 @@ svm.cv.rad.w
 
 ```{r}
 
+n_cores <- parallel::detectCores()
+
+cl <- makePSOCKcluster(n_cores - 1)  # Leave 1 core free to keep system responsive
+registerDoParallel(cl)
+
+
 grid <- expand.grid(
-  C = c(0.1, 1, 10)     
+  degree = c(2, 3, 4),   # degree of the polynomial
+  scale = c(0.001, 0.01, 0.1),  # scaling factor
+  C = c(0.1, 1, 10)      # regularization parameter
 )
 
 svm.cv.poly <- train(
@@ -217,8 +255,15 @@ svm.cv.poly <- train(
 
 svm.cv.poly
 
+
+stopCluster(cl)
+registerDoSEQ()
+
+
 ```
 
+Accuracy was used to select the optimal model using the largest value.
+The final values used for the model were degree = 2, scale = 0.1 and C = 1.
 
 ### Best Model and prediction
 
@@ -282,7 +327,7 @@ We're using the package ranger as it allows for parallel processing.
 ### Train/Test Split
 
 ```{r}
-split = get_train_test(data,"CrashSeverity", train_pct = .8, 
+split = get_train_test(data,"CrashSeverity", train_pct = .8, data_slice_pct = .1,
                        return_indices = FALSE, seed = 1)
 train = split$train
 test = split$test
