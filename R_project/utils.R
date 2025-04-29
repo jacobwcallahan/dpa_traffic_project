@@ -1,8 +1,17 @@
 library(yardstick)
 library(dplyr)
 library(caret)
+
 get_f1_vals = function(ytest, yhats) {
+  cats = as.vector(unique(ytest))
+  lagged_cats = lag(cats, 1)
+  lagged_cats[1] = cats[length(cats)]
+  
+  fix_0_preds <- cbind(truth = cats, predictions = lagged_cats)
+  
   pred_df = tibble(truth = ytest,predictions = yhats)
+  
+  pred_df = rbind(pred_df, fix_0_preds)
   
   f1_macro <- f_meas(pred_df, truth, estimate = predictions, estimator = "macro")
   

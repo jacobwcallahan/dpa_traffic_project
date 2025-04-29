@@ -18,6 +18,8 @@ source("utils.R")
 library(e1071)
 library(xgboost)
 library(synthpop)
+library(ranger)
+library(MLmetrics)
 ```
 
 ## Loading Data
@@ -52,27 +54,15 @@ table(data$CrashSeverity)
 
 ```
 
+## Developing Baseline Model
 
-# Create one hot encoded matrix for data (Besides target variable)
+Our baseline model will be a simple multinomial Logistic Regression. Our response variable will be *CrashSeverity*. Our sole predictor will be *WeatherCond*. The three responses we will be predicting can be Fatal, Injury, or Property Damage.
+
+
+### Creating train test split
 
 ```{r}
-# Creates and saves the labels
-label_factor <- factor(orig_data[,1])                 
-labels <- as.integer(label_factor) - 1          
-label_levels <- levels(label_factor)   
 
-# Turns orig_data into data_mat
-# Target variable mapping is 0 - Fatal, 1 - Injury, 2 - Property Damage
-data_mat = model.matrix(~., data = orig_data[,-1])
-data_mat[,1] = as.integer(orig_data$CrashSeverity) - 1
-colnames(data_mat)[1] = "CrashSeverity"
-
-# This is how to turn the target variable back into characters
-y = label_levels[data_mat[,1] + 1]
-```
-
-## Creating train test split
-```{r}
 split = get_train_test(data, "CrashSeverity", data_slice_pct = .05, seed = 1)
 
 train = split$train
@@ -80,11 +70,7 @@ test = split$test
 
 ```
 
-
-
-## Developing Baseline Model
-
-Our baseline model will be a simple multinomial Logistic Regression. Our response variable will be *CrashSeverity*. Our sole predictor will be *WeatherCond*. The three responses we will be predicting can be Fatal, Injury, or Property Damage.
+### Baseline Model Training
 
 ```{r}
 model.log = multinom(CrashSeverity ~ WeatherCond, data = train, family = multinomial)
@@ -99,10 +85,7 @@ get_f1_vals(test[,1],yhats)
 
 Clearly we can see that the baseline model is not very effective at predicting anything but Property Damage. 
 
-
-
 ## Naive Bayes
-
 
 ```{r}
 library(dplyr)
@@ -117,7 +100,6 @@ table(pred = yhats, actual = test[,1])
 get_f1_vals(test[,1],yhats)
 
 ```
-
 
 ## Adding predictors to baseline model
 
@@ -138,24 +120,125 @@ get_f1_vals(test[,1],yhats)
 
 ```
 
-## SVM 
+
+## SVM
+
+### Train/Test Split
 
 ```{r}
+
 split = get_train_test(orig_data, "CrashSeverity",data_slice_pct = .01)
 train = split$train
 test = split$test
 
-svm.model <- svm(CrashSeverity ~ ., data = train, kernel = "linear")
+ctrl <- trainControl(method = "cv", number = 5)  # 5-fold CV
 
-yhats = predict(svm.model, newdata = test)
+```
+
+
+### Linear Cross-Validation and Hyperparameter tuning
+
+```{r}
+
+grid <- expand.grid(
+  cost = c(0.1, 1, 10)        
+)
+
+svm.cv.linear <- train(
+  CrashSeverity ~ ., 
+  data = train,
+  trControl = ctrl,
+  method = "svmLinear2",
+  tuneGrid = grid
+)
+
+svm.cv.linear
+
+```
+
+### Radial Cross-Validation and Hyperparameter tuning
+
+```{r}
+grid <- expand.grid(
+  C = c(0.1, 1, 10),        
+  sigma = c(0.0001, 0.001, 0.01)
+)
+
+svm.cv.rad <- train(
+  CrashSeverity ~ ., 
+  data = train,
+  trControl = ctrl,
+  method = "svmRadial",
+  tuneGrid = grid
+)
+
+svm.cv.rad
+
+```
+
+
+### Radial-Weighted Cross-Validation and Hyperparameter tuning
+
+```{r}
+
+grid <- expand.grid(
+  C = c(0.1, 1, 10),        
+  sigma = c(0.0001, 0.001, 0.01)
+)
+
+svm.cv.rad.w <- train(
+  CrashSeverity ~ ., 
+  data = train,
+  trControl = ctrl,
+  method = "svmRadialWeights",
+  tuneGrid = grid
+)
+
+svm.cv.rad.w
+
+```
+
+
+### Polynomial Cross-Validation and Hyperparameter tuning
+
+```{r}
+
+grid <- expand.grid(
+  C = c(0.1, 1, 10)     
+)
+
+svm.cv.poly <- train(
+  CrashSeverity ~ ., 
+  data = train,
+  trControl = ctrl,
+  method = "svmPoly",
+  tuneGrid = grid
+)
+
+svm.cv.poly
+
+```
+
+
+### Best Model and prediction
+
+```{r}
+
+yhats = predict(poly.svm.model, newdata = test)
 
 table(predicted = yhats, actual = test[,1])
 
 get_f1_vals(test[,1],yhats)
 
+
 ```
 
-# More Feature Selection
+
+
+
+
+
+## More Feature Selection
 
 ```{r}
 library(glmnet)
@@ -191,16 +274,54 @@ data_selected = data_mat[,selected_features, drop = FALSE]
 
 ```
 
-## RandomForest Analysis
+## RandomForest
 
 We're using the package ranger as it allows for parallel processing. 
 
+
+### Train/Test Split
+
 ```{r}
-library(ranger)
-library(MLmetrics)
+split = get_train_test(data,"CrashSeverity", train_pct = .8, 
+                       return_indices = FALSE, seed = 1)
+train = split$train
+test = split$test
+```
+
+
+### RandomForest Cross-Validation
+
+```{r}
+ctrl <- trainControl(method = "cv", number = 5)
+
+tuneGrid <- expand.grid(
+  mtry = c(48, 94), 
+  splitrule = c("gini", "extratrees"), 
+  min.node.size = c(1, 5, 10)
+)
+
+# Correct version with num.threads passed properly:
+rf.cv = train(
+  CrashSeverity ~ ., 
+  data = train, 
+  method = "ranger",
+  trControl = ctrl,
+  tuneGrid = tuneGrid,
+  num.threads = 16,         
+  importance = "impurity"   
+)
+
+print(rf.cv)
+
+
+```
+
+### Final RandomForest Model Training
+
+```{r}
 
 model.rf = ranger(CrashSeverity ~ ., train, 
-                  mtry = 4,
+                  mtry = 48,
                   num.trees = 250,
                   num.threads = 16)
 yhats = predict(model.rf, test, response = 'class')
@@ -217,44 +338,64 @@ get_f1_vals(yhats$predictions, test[,1])
 ## XGBoost
 
 
-### Train test split
-Train test splitting for XGBoost
+### Creating Label Factors
 
 ```{r}
 
 data = orig_data
 
 label_factor <- factor(data[, 1])                 
-labels <- as.integer(label_factor) - 1            # 0-indexed numeric labels
-label_levels <- levels(label_factor)              # store the original meaning
+labels <- as.integer(label_factor) - 1
+label_levels <- levels(label_factor)            
+
+```
 
 
+### Train/test split with no oversampling
 
-# 3. Split into train/test
+```{r}
+
+split = get_train_test(data,"CrashSeverity", train_pct = .5, data_slice_pct = .025, 
+                       return_indices = TRUE, seed = 1)
+
+train.inds = split$train
+test.inds = split$test
+
+```
+
+
+### Train/test split with oversampling
+
+```{r}
 
 split = get_train_test(data,"CrashSeverity", train_pct = .5, oversample = TRUE, 
                        return_indices = TRUE, seed = 1)
+
 train.inds = split$train
+test.inds = split$test
 
-# Add synthetic data to training set, takes long time like ~ 5 mins
-syn.data = rbind(data[train.inds,], 
-                 syn(data[train.inds,],k = 5 * length(train.inds)))
+```
 
-train_x = syn.data[, -1]
+
+### Rest of Train/test splitting
+
+```{r}
+
+train_x = data[train.inds, -1]
 train_x = model.matrix(~., train_x)[, -1]
 
 train_y <- labels[train.inds]
 
 # Obtains different split for the test data
-split = get_train_test(data[-train.inds,],"CrashSeverity", 
+split = get_train_test(data[test.inds,],"CrashSeverity", 
                        train_pct = .5,seed = 1, return_indices = TRUE)
+
 valid.inds = split$train
 
 valid_x = data[valid.inds, -1]
 valid_x = model.matrix(~., valid_x)[, -1]
 
 valid_y <- labels[valid.inds]
-
 
 test.inds = split$test
 
@@ -267,6 +408,7 @@ test_y <- labels[test.inds]
 train.xgb <- xgb.DMatrix(data = train_x, label = train_y)
 
 ```
+
 
 ### Classes XGBoost
 
@@ -287,15 +429,16 @@ cv.model.xgb <- xgb.cv(
   data = train.xgb,
   nfold = 5,
   nrounds = 70,
+  early_stopping_rounds = 20,
   verbose = 1,
   prediction = TRUE
 )
 
-
 classes.xgb <- xgb.train(
   params = params,
   data = train.xgb,
-  nrounds = 30
+  nrounds = 30,
+  cv.model.xgb$best_iteration
 )
 
 yhats = predict(classes.xgb, test_x)
@@ -312,6 +455,7 @@ get_f1_vals(
 )
 
 ```
+
 
 ### Probability XGBoost
 
@@ -359,7 +503,6 @@ get_f1_vals(
   factor(predicted_labels, levels = valid_classes),
   factor(actual_labels, levels = valid_classes)
 )
-
 
 
 ```

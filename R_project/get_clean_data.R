@@ -24,7 +24,7 @@ get_clean_data = function(df = NULL) {
   
   # This drops certain variables. These variables need to be fixed to conduct analysis on. 
   unclean_data = unclean_data[,!colnames(unclean_data) %in% c("DamagedProperty1","CityClassCode",
-                                                              "CityName","CityClassCode",
+                                                              "CityName",
                                                               "CrashReportCounty","TrafficControlDeviceCond",
                                                               "ClassOfTrafficway","TimeOfCrash",
                                                               "CrashSeverityCd")] 
