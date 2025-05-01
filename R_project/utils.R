@@ -1,6 +1,7 @@
 library(yardstick)
 library(dplyr)
 library(caret)
+library(pROC)
 
 get_f1_vals = function(ytest, yhats) {
   cats = as.vector(unique(ytest))
@@ -100,4 +101,38 @@ get_train_test = function(data, target_class, train_pct = .8,
     return(list(train = train, test = test))
   }
 
+}
+
+plot_roc_OvR <- function(probs, actual) {
+  prob_df <- as.data.frame(probs)
+  
+  # Ensure actual is a factor with the correct levels
+  actual <- factor(actual)
+  classes <- levels(actual)
+  
+  # Check that column names match class levels
+  if (!all(classes %in% colnames(prob_df))) {
+    stop("Column names of probs must match the class labels in actual.")
+  }
+  
+  # Generate One-vs-Rest ROC curves
+  roc_list <- lapply(classes, function(cls) {
+    roc(response = actual == cls, predictor = prob_df[[cls]], levels = c(FALSE, TRUE))
+  })
+  
+  names(roc_list) <- classes
+  
+  # Plot the first ROC
+  plot.roc(roc_list[[1]], col = 1, legacy.axes = TRUE, main = "One-vs-Rest ROC Curves")
+  
+  # Add others
+  sapply(2:length(roc_list), function(i) {
+    lines.roc(roc_list[[i]], col = i)
+  })
+  
+  # Add AUCs to legend
+  aucs <- sapply(roc_list, auc)
+  legend_labels <- paste0(names(roc_list), " vs Rest (AUC = ", round(aucs, 3), ")")
+  
+  legend("bottomright", legend = legend_labels, col = 1:length(roc_list), lwd = 2)
 }
