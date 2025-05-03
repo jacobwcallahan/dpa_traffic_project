@@ -2,3 +2,6 @@
 **.Rhistory
 **.RData
 **.Ruserdata
+.Rproj.user
+R_project/*.csv
+R_project/crashes.db

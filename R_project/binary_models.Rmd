@@ -24,7 +24,6 @@ data = orig_data
 ```{r}
 
 
-
 fatal_data$CrashSeverity = as.factor(ifelse(fatal_data$CrashSeverity == "Fatal", "Fatal", "Not Fatal"))
 
 fatal_data = model.matrix(~., data = orig_data)

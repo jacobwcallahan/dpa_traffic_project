@@ -9,7 +9,8 @@ Note: See for Route Numbers:
 
 ```{r}
 # Importing the CSV file
-crash_data <- read.csv("crash_2022.csv", header = TRUE)
+crash_data <- read.csv("crash_22.csv", header = TRUE)
+
 
 # View the first few rows of the dataset
 head(crash_data)
@@ -97,7 +98,7 @@ clean_data <- clean_data %>%
     !is.na(DamagedProperty1),
     !is.na(AgencyReportYear)
   )
-dim(clean_data)
+
 # Count the number of "(UNK)" values in each column
 unknown_counts <- sapply(clean_data, function(col) sum(col == "(UNK)", na.rm = TRUE))
 
@@ -298,9 +299,6 @@ ggplot(melted_data, aes(value)) +
 #####Let us identify relationships between numerical features and the target variable (CrashSeverityCd).
 
 
-```{r}
-unique(clean_data$CrashInjurySeverity)
-```
 
 ### Strong correlation numerical columns with CrashInjurySeverity:
 ```{r}
@@ -561,9 +559,7 @@ clean_data_filter <- clean_data_filter %>%
   arrange(CrashDate)
 ```
 
-```{r}
-head(clean_data_filter)
-```
+
 
 ```{r}
 mappings <- list(
@@ -610,7 +606,8 @@ head(clean_data)
 ##Feature Selection:
 ```{r}
 # Convert Township to numeric using factor encoding
-clean_data $Township <- as.numeric(as.factor(clean_data $Township))
+clean_data_filter$Township <- as.numeric(as.factor(clean_data_filter$Township))
+
 ```
 
 #only works on Numerical columns the best.
@@ -713,7 +710,8 @@ selected_numeric_cols <- c(
 )
 
 # === Step 2: Get all categorical columns from original data ===
-categorical_cols <- names(clean_data)[sapply(clean_data, function(col) is.factor(col) || is.character(col))]
+categorical_cols <- names(clean_data_filter)[sapply(clean_data_filter, function(col) is.factor(col) || is.character(col))]
+
 
 # === Step 3: Combine numeric and categorical columns ===
 final_columns <- union(selected_numeric_cols, categorical_cols)
@@ -724,6 +722,7 @@ columns_to_exclude <- c("RoadwayFunctionalClassCond", "WeatherCondCond", "Lighti
 final_columns <- setdiff(final_columns, columns_to_exclude)
 
 # === Step 5: Create final dataframe ===
+
 final_df <- clean_data[, final_columns]
 
 # === Step 6: Check structure ===
@@ -776,6 +775,7 @@ barplot(weather_counts,
         las = 2)
 
 ```
+
 
 Most accidents happened in the month of October and are higher in the months of Nov,dec mostly because of Snow?(Why?), most of the time the codition was clear.
 
