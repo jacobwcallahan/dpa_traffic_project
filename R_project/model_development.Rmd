@@ -20,6 +20,7 @@ library(xgboost)
 library(synthpop)
 library(ranger)
 library(MLmetrics)
+library(doParallel)
 ```
 
 ## Loading Data
@@ -62,7 +63,7 @@ Our baseline model will be a simple multinomial Logistic Regression. Our respons
 ### Creating train test split
 
 ```{r}
-
+set.seed(5)
 split = get_train_test(data, "CrashSeverity", data_slice_pct = .05, seed = 1)
 
 train = split$train
@@ -73,13 +74,50 @@ test = split$test
 ### Baseline Model Training
 
 ```{r}
-model.log = multinom(CrashSeverity ~ WeatherCond, data = train, family = multinomial)
 
-yhats <- predict(model.log, test, type = "class")
-conf_mat = table(predicted = yhats, actual = test$CrashSeverity)
-conf_mat
+k_folds <- 5
+folds <- createFolds(train$CrashSeverity, k = k_folds, list = TRUE)
 
-get_f1_vals(test[,1],yhats)
+# Store metrics
+f1s = data.frame(Macro_F1 = numeric(), Weighted_F1 = numeric())
+
+all_probs <- list()
+all_actuals <- c()
+all_preds <- c()
+
+for (i in 1:k_folds) {
+  val_idx <- folds[[i]]
+  train_cv <- train[-val_idx, ]
+  val_cv <- train[val_idx, ]
+
+  # Fit model
+  model_cv <- multinom(CrashSeverity ~ WeatherCond, data = train_cv)
+
+  # Predictions
+  probs_cv <- predict(model_cv, val_cv, type = "prob")
+  class_cv <- predict(model_cv, val_cv, type = "class")
+
+  # F1 score
+  f1_scores = get_f1_vals(val_cv$CrashSeverity, class_cv)
+  
+  f1s = rbind(f1s, f1_scores)
+
+  # Collect probs and actuals for ROC
+  all_probs <- append(all_probs, list(probs_cv))
+  all_actuals <- c(all_actuals, as.character(val_cv$CrashSeverity))
+  all_preds <- c(all_preds, as.character(class_cv))
+}
+
+colMeans(f1s)
+
+probs_matrix <- do.call(rbind, all_probs)
+
+# Plot ROC
+plot_roc_OvR(probs_matrix, all_actuals)
+
+
+table(predicted = all_preds, actual = all_actuals)
+
 
 ```
 
@@ -87,19 +125,72 @@ Clearly we can see that the baseline model is not very effective at predicting a
 
 ## Naive Bayes
 
+### Creating train test split
+
+```{r}
+set.seed(5)
+split = get_train_test(data, "CrashSeverity", data_slice_pct = .05, seed = 1)
+
+train = split$train
+test = split$test
+
+```
+
+### Cross Validation Naive Bayes
+
 ```{r}
 library(dplyr)
 library(e1071)
 
-model.nb = naiveBayes(CrashSeverity ~., data = train, laplace = 0)
 
-yhats = predict(model.nb, test)
+k_folds <- 5
+folds <- createFolds(train$CrashSeverity, k = k_folds, list = TRUE)
 
-table(pred = yhats, actual = test[,1])
+# Store metrics
+f1s = data.frame(Macro_F1 = numeric(), Weighted_F1 = numeric())
 
-get_f1_vals(test[,1],yhats)
+all_probs <- list()
+all_actuals <- c()
+all_preds <- c()
+
+for (i in 1:k_folds) {
+  val_idx <- folds[[i]]
+  train_cv <- train[-val_idx, ]
+  val_cv <- train[val_idx, ]
+
+  # Fit model
+  model_cv = naiveBayes(CrashSeverity ~., data = train, laplace = 0)
+
+  # Predictions
+  probs_cv <- predict(model_cv, val_cv, type = "raw")
+  class_cv <- predict(model_cv, val_cv, type = "class")
+
+  # F1 score
+  f1_scores = get_f1_vals(val_cv$CrashSeverity, class_cv)
+  
+  f1s = rbind(f1s, f1_scores)
+
+  # Collect probs and actuals for ROC
+  all_probs <- append(all_probs, list(probs_cv))
+  all_actuals <- c(all_actuals, as.character(val_cv$CrashSeverity))
+  all_preds <- c(all_preds, as.character(class_cv))
+}
+
+colMeans(f1s)
+
+probs_matrix <- do.call(rbind, all_probs)
+
+# Plot ROC
+plot_roc_OvR(probs_matrix, all_actuals)
+
+
+table(predicted = all_preds, actual = all_actuals)
+
+
 
 ```
+
+
 
 ## Adding predictors to baseline model
 
@@ -107,16 +198,76 @@ Our initial model was only partially effective as we just had a single predictor
 
 Using library "nnet" to conduct multinomial logistic regression. 
 
+### Creating train test split
+
+```{r}
+set.seed(5)
+split = get_train_test(data, "CrashSeverity", data_slice_pct = .05, seed = 1)
+
+train = split$train
+test = split$test
+
+```
+
+### Multiple Logistic Regression
+
 ```{r}
 library(nnet)
 
-model.log = multinom(CrashSeverity ~ ., data = train)
+k_folds <- 5
+folds <- createFolds(train$CrashSeverity, k = k_folds, list = TRUE)
 
-yhats = predict(model.log, test, type = 'class')
+# Store metrics
+f1s = data.frame(Macro_F1 = numeric(), Weighted_F1 = numeric())
 
-table(predicted = yhats, actual = test$CrashSeverity)
+all_probs <- list()
+all_actuals <- c()
+all_preds <- c()
 
-get_f1_vals(test[,1],yhats)
+for (i in 1:k_folds) {
+  val_idx <- folds[[i]]
+  train_cv <- train[-val_idx, ]
+  val_cv <- train[val_idx, ]
+
+  # Fit model
+  model_cv <- multinom(CrashSeverity ~ ., data = train_cv)
+
+  # Predictions
+  probs_cv <- predict(model_cv, val_cv, type = "prob")
+  class_cv <- predict(model_cv, val_cv, type = "class")
+
+  # F1 score
+  f1_scores = get_f1_vals(val_cv$CrashSeverity, class_cv)
+  
+  f1s = rbind(f1s, f1_scores)
+
+  # Collect probs and actuals for ROC
+  all_probs <- append(all_probs, list(probs_cv))
+  all_actuals <- c(all_actuals, as.character(val_cv$CrashSeverity))
+  all_preds <- c(all_preds, as.character(class_cv))
+}
+
+colMeans(f1s)
+
+probs_matrix <- do.call(rbind, all_probs)
+
+# Plot ROC
+plot_roc_OvR(probs_matrix, all_actuals)
+
+
+table(predicted = all_preds, actual = all_actuals)
+
+
+```
+
+```{r}
+model.log <- multinom(CrashSeverity ~ ., data = train)
+
+coefs <- summary(model.log)$coefficients
+std_err <- summary(model.log)$standard.errors
+
+z_values <- coefs / std_err
+p_values <- 2 * (1 - pnorm(abs(z_values)))  
 
 ```
 
@@ -127,11 +278,13 @@ get_f1_vals(test[,1],yhats)
 
 ```{r}
 
-split = get_train_test(orig_data, "CrashSeverity",data_slice_pct = .01)
+split = get_train_test(orig_data, "CrashSeverity",data_slice_pct = .01, train_pct = .5)
 train = split$train
 test = split$test
 
 ctrl <- trainControl(method = "cv", number = 5)  # 5-fold CV
+
+n_cores <- parallel::detectCores()
 
 ```
 
@@ -139,6 +292,10 @@ ctrl <- trainControl(method = "cv", number = 5)  # 5-fold CV
 ### Linear Cross-Validation and Hyperparameter tuning
 
 ```{r}
+
+
+cl <- makePSOCKcluster(12)  # Leave 1 core free to keep system responsive
+registerDoParallel(cl)
 
 grid <- expand.grid(
   cost = c(0.1, 1, 10)        
@@ -154,11 +311,43 @@ svm.cv.linear <- train(
 
 svm.cv.linear
 
+stopCluster(cl)
+registerDoSEQ()
+
+
 ```
+
+Accuracy was used to select the optimal model using the largest value.
+The final value used for the model was cost = 0.1.
+
+### Training Linear Best Model
+
+```{r}
+
+svm.linear <- train(
+  CrashSeverity ~ ., 
+  data = train,
+  method = "svmLinear",
+  tuneGrid = data.frame(C = .1)                # your chosen cost value
+)
+
+yhats = predict(svm.linear, newdata = test)
+
+table(predicted = yhats, actual = test[,1])
+
+get_f1_vals(test[,1],yhats)
+
+```
+
+
 
 ### Radial Cross-Validation and Hyperparameter tuning
 
 ```{r}
+
+cl <- makePSOCKcluster(n_cores - 1)  # Leave 1 core free to keep system responsive
+registerDoParallel(cl)
+
 grid <- expand.grid(
   C = c(0.1, 1, 10),        
   sigma = c(0.0001, 0.001, 0.01)
@@ -174,29 +363,39 @@ svm.cv.rad <- train(
 
 svm.cv.rad
 
+stopCluster(cl)
+registerDoSEQ()
+
 ```
+Accuracy was used to select the optimal model using the largest value.
+The final values used for the model were sigma = 0.01 and C = 1
 
-
-### Radial-Weighted Cross-Validation and Hyperparameter tuning
+### Training best Radial Model
 
 ```{r}
 
-grid <- expand.grid(
-  C = c(0.1, 1, 10),        
-  sigma = c(0.0001, 0.001, 0.01)
-)
+cl <- makePSOCKcluster(12)  # Leave 1 core free to keep system responsive
+registerDoParallel(cl)
 
-svm.cv.rad.w <- train(
+svm.radial <- train(
   CrashSeverity ~ ., 
   data = train,
-  trControl = ctrl,
-  method = "svmRadialWeights",
-  tuneGrid = grid
-)
+  method = "svmRadial",
+  tuneGrid = data.frame(C = 1, sigma = 0.01)
+  )
 
-svm.cv.rad.w
+yhats = predict(svm.radial, newdata = test)
+
+table(predicted = yhats, actual = test[,1])
+
+get_f1_vals(test[,1],yhats)
+
+stopCluster(cl)
+registerDoSEQ()
 
 ```
+
+
 
 
 ### Polynomial Cross-Validation and Hyperparameter tuning
@@ -204,7 +403,9 @@ svm.cv.rad.w
 ```{r}
 
 grid <- expand.grid(
-  C = c(0.1, 1, 10)     
+  degree = c(2, 3, 4),   # degree of the polynomial
+  scale = c(0.001, 0.01, 0.1),  # scaling factor
+  C = c(0.1, 1, 10)      # regularization parameter
 )
 
 svm.cv.poly <- train(
@@ -217,25 +418,40 @@ svm.cv.poly <- train(
 
 svm.cv.poly
 
+
+
 ```
 
+Accuracy was used to select the optimal model using the largest value.
+The final values used for the model were degree = 2, scale = 0.1 and C = 1.
 
-### Best Model and prediction
+### Training best Polynomial Model
 
 ```{r}
 
-yhats = predict(poly.svm.model, newdata = test)
+cl <- makePSOCKcluster(12)
+registerDoParallel(cl)
+
+
+svm.poly <- train(
+  CrashSeverity ~ ., 
+  data = train,
+  method = "svmPoly",
+  tuneGrid = data.frame(degree = 2, scale = 0.1, C = 1.)     
+)
+
+yhats = predict(svm.poly, newdata = test)
 
 table(predicted = yhats, actual = test[,1])
 
 get_f1_vals(test[,1],yhats)
 
+stopCluster(cl)
+registerDoSEQ()
 
 ```
 
-
-
-
+We can see that all the SVMs underperform multiple other models.
 
 
 ## More Feature Selection
@@ -282,39 +498,109 @@ data_selected = data_mat[,selected_features, drop = FALSE]
 We're using the package ranger as it allows for parallel processing. 
 
 
-### Train/Test Split
+### Random Forest Hyperparameter tuning
 
-```{r}
-split = get_train_test(data,"CrashSeverity", train_pct = .8, 
+```{r p7}
+library(randomForest)
+
+split = get_train_test(orig_data,"CrashSeverity", train_pct = .8, data_slice_pct = .025,
                        return_indices = FALSE, seed = 1)
 train = split$train
 test = split$test
+
+f1s = data.frame(ntrees = numeric(),mtry = numeric(),macro_f1 = numeric(), weighted_f1 = numeric())
+trees = seq(50, 500, by = 50)
+
+mtrys = seq(1,13, by = 2)
+
+for (m in mtrys) {
+  for (t in trees) {
+    print(paste("m:", m,"t:",t))
+    
+    model.rf = ranger(CrashSeverity ~ ., train, 
+                  mtry = m,
+                  num.trees = t,
+                  num.threads = 16)
+    
+    yhat = predict(model.rf, test)$predictions
+
+    f1s = rbind(f1s, c(t,m,
+                       get_f1_vals(test[,1],yhat)$Macro_F1,
+                       get_f1_vals(test[,1],yhat)$Weighted_F1))
+  
+  }
+}
+
+
+colnames(f1s) = c("ntrees","mtry","macro_f1", "weighted_f1")
+
+
 ```
 
-
-### RandomForest Cross-Validation
+#### Plotting Hyperparameter tuning
 
 ```{r}
-ctrl <- trainControl(method = "cv", number = 5)
+par(xpd = TRUE, mar = c(5, 4, 4, 8))  # add extra right margin space
+colors = rainbow(length(mtrys))
+color_names = c("Red", "Yellow", "Green", "Cyan", "Blue", "Magenta")
 
-tuneGrid <- expand.grid(
-  mtry = c(48, 94), 
-  splitrule = c("gini", "extratrees"), 
-  min.node.size = c(1, 5, 10)
-)
+f1s = f1s[f1s$mtry != 1,]
 
-# Correct version with num.threads passed properly:
-rf.cv = train(
-  CrashSeverity ~ ., 
-  data = train, 
-  method = "ranger",
-  trControl = ctrl,
-  tuneGrid = tuneGrid,
-  num.threads = 16,         
-  importance = "impurity"   
-)
+plot(NULL,
+     xlim = range(f1s$ntrees),
+     ylim = range(f1s$macro_f1),
+     xlab = "ntrees",
+     ylab = "macro f1",
+     main = "Macro F1 vs mtrys for different ntree values")
 
-print(rf.cv)
+for (i in 1:length(mtrys)) {
+  
+  subset_data = f1s[f1s$mtry == mtrys[i], ]
+  
+  lines(subset_data$ntrees, subset_data$macro_f1, col = colors[i], lwd = 2)
+}
+
+legend("topright", inset = c(-.3, 0), 
+       legend = mtrys,
+       col = colors, 
+       lwd = 2, 
+       title = "MTRY Values", 
+       xpd = TRUE, 
+       bty = "n")
+
+print("MTRY Values: ")
+print(paste(color_names,"=",mtrys))
+
+print(f1s[which.max(f1s$macro_f1),])
+
+plot(NULL,
+     xlim = range(f1s$ntrees),
+     ylim = range(f1s$weighted_f1),
+     xlab = "ntrees",
+     ylab = "weighted f1",
+     main = "weighted f1 vs mtrys for different ntree values")
+
+for (i in 1:length(mtrys)) {
+  
+  subset_data = f1s[f1s$mtry == mtrys[i], ]
+  
+  lines(subset_data$ntrees, subset_data$weighted_f1, col = colors[i], lwd = 2)
+}
+
+print("MTRY Values: ")
+print(paste(color_names,"=",mtrys))
+
+print(f1s[which.max(f1s$weighted_f1),])
+
+
+legend("topright", inset = c(-.3, 0), 
+       legend = mtrys,
+       col = colors, 
+       lwd = 2, 
+       title = "MTRY Values", 
+       xpd = TRUE, 
+       bty = "n")
+
 
 
 ```
@@ -323,23 +609,36 @@ print(rf.cv)
 
 ```{r}
 
+split = get_train_test(data,"CrashSeverity", train_pct = .8, data_slice_pct = .1,
+                       return_indices = FALSE, seed = 1)
+train = split$train
+test = split$test
+
+
 model.rf = ranger(CrashSeverity ~ ., train, 
-                  mtry = 48,
-                  num.trees = 250,
+                  mtry = 5,
+                  num.trees = 100,
+                  probability = TRUE,
                   num.threads = 16)
-yhats = predict(model.rf, test, response = 'class')
+
+
+yhat_probs = predict(model.rf, test)$predictions
+
+yhats = colnames(yhat_probs)[max.col(yhat_probs, ties.method = "first")]
 
 summary(model.rf)
 
-table(predictions = yhats$predictions, actual = test[,1])
+table(predictions = yhats, actual = test[,1])
 
-get_f1_vals(yhats$predictions, test[,1])
+get_f1_vals(as.factor(yhats), test[,1])
+
+plot_roc_OvR(yhat_probs, test[,1])
+
 
 ```
 
 
 ## XGBoost
-
 
 ### Creating Label Factors
 
@@ -354,11 +653,11 @@ label_levels <- levels(label_factor)
 ```
 
 
-### Train/test split with no oversampling
+### Train/test split
 
 ```{r}
 
-split = get_train_test(data,"CrashSeverity", train_pct = .5, data_slice_pct = .025, 
+split = get_train_test(data,"CrashSeverity", train_pct = .5, data_slice_pct = .5, 
                        return_indices = TRUE, seed = 1)
 
 train.inds = split$train
@@ -367,18 +666,21 @@ test.inds = split$test
 ```
 
 
-### Train/test split with oversampling
+### Oversampled Train/test split
 
 ```{r}
-
-split = get_train_test(data,"CrashSeverity", train_pct = .5, oversample = TRUE, 
+split = get_train_test(data,"CrashSeverity", train_pct = .99, data_slice_pct = 1,
                        return_indices = TRUE, seed = 1)
 
-train.inds = split$train
 test.inds = split$test
 
-```
+split = get_train_test(data[split$train,],"CrashSeverity", train_pct = 1, oversample = TRUE, 
+                       return_indices = TRUE, seed = 1)
 
+train.inds = split$train # Oversampled training data
+
+
+```
 
 ### Rest of Train/test splitting
 
@@ -400,8 +702,6 @@ valid_x = model.matrix(~., valid_x)[, -1]
 
 valid_y <- labels[valid.inds]
 
-test.inds = split$test
-
 test_x = data[test.inds, -1]
 test_x = model.matrix(~., test_x)[, -1]
 
@@ -412,55 +712,7 @@ train.xgb <- xgb.DMatrix(data = train_x, label = train_y)
 
 ```
 
-
-### Classes XGBoost
-
-```{r}
-
-params <- list(
-  objective = "multi:softmax",
-  eval_metric = "mlogloss",
-  num_class = length(label_levels),
-  max_depth = 6,
-  min_child_weight = 2,
-  gamma = 1,
-  nthread = 16
-  )
-
-cv.model.xgb <- xgb.cv(
-  params = params,
-  data = train.xgb,
-  nfold = 5,
-  nrounds = 70,
-  early_stopping_rounds = 20,
-  verbose = 1,
-  prediction = TRUE
-)
-
-classes.xgb <- xgb.train(
-  params = params,
-  data = train.xgb,
-  nrounds = 30,
-  cv.model.xgb$best_iteration
-)
-
-yhats = predict(classes.xgb, test_x)
-predicted_labels <- label_levels[yhats + 1]        
-actual_labels <- label_levels[test_y + 1]
-
-valid_classes <- intersect(unique(predicted_labels), unique(actual_labels))
-
-# 8. Evaluate
-table(predicted = predicted_labels, actual = actual_labels)
-get_f1_vals(
-  factor(predicted_labels, levels = valid_classes),
-  factor(actual_labels, levels = valid_classes)
-)
-
-```
-
-
-### Probability XGBoost
+### XGBoost Cross Validation
 
 ```{r}
 params <- list(
@@ -484,6 +736,37 @@ cv.model.xgb <- xgb.cv(
   prediction = TRUE
 )
 
+
+```
+
+### Classes XGBoost
+
+```{r}
+classes.xgb <- xgb.train(
+  params = params,
+  data = train.xgb,
+  nrounds = cv.model.xgb$best_iteration
+)
+
+yhats = predict(classes.xgb, test_x)
+predicted_labels <- label_levels[yhats + 1]        
+actual_labels <- label_levels[test_y + 1]
+
+valid_classes <- intersect(unique(predicted_labels), unique(actual_labels))
+
+# 8. Evaluate
+table(predicted = predicted_labels, actual = actual_labels)
+get_f1_vals(
+  factor(predicted_labels, levels = valid_classes),
+  factor(actual_labels, levels = valid_classes)
+)
+```
+
+
+### Probabilites XGBoost
+
+
+```{r}
 probs.xgb <- xgb.train(
   params = params,
   data = train.xgb,
@@ -494,6 +777,9 @@ yhat_probs = predict(probs.xgb, valid_x)
 yhat_mat <- matrix(yhat_probs, nrow = length(yhat_probs) / 3, ncol = 3, byrow = TRUE)
 
 yhats <- max.col(yhat_mat) - 1  # -1 if your classes start at 0
+
+yhat_df = as.data.frame(yhat_mat)
+colnames(yhat_df) = label_levels
 
 predicted_labels <- label_levels[yhats + 1]        
 actual_labels <- label_levels[valid_y + 1]
@@ -507,6 +793,9 @@ get_f1_vals(
   factor(actual_labels, levels = valid_classes)
 )
 
+plot_roc_OvR(probs = yhat_df, actual = actual_labels)
+
 
 ```
+
 
