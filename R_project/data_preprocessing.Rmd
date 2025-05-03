@@ -11,6 +11,7 @@ Note: See for Route Numbers:
 # Importing the CSV file
 crash_data <- read.csv("crash_22.csv", header = TRUE)
 
+
 # View the first few rows of the dataset
 head(crash_data)
 
@@ -298,10 +299,6 @@ ggplot(melted_data, aes(value)) +
 #####Let us identify relationships between numerical features and the target variable (CrashSeverityCd).
 
 
-```{r}
-unique(clean_data$CrashInjurySeverity)
-table(clean_data$CrashInjurySeverity)
-```
 
 ### Strong correlation numerical columns with CrashInjurySeverity:
 ```{r}
@@ -562,10 +559,7 @@ clean_data_filter <- clean_data_filter %>%
   arrange(CrashDate)
 ```
 
-```{r}
-head(clean_data_filter)
 
-```
 
 ```{r}
 mappings <- list(
@@ -613,7 +607,7 @@ head(clean_data)
 ```{r}
 # Convert Township to numeric using factor encoding
 clean_data_filter$Township <- as.numeric(as.factor(clean_data_filter$Township))
-clean_data $Township <- as.numeric(as.factor(clean_data $Township))
+
 ```
 
 #only works on Numerical columns the best.
@@ -718,6 +712,7 @@ selected_numeric_cols <- c(
 # === Step 2: Get all categorical columns from original data ===
 categorical_cols <- names(clean_data_filter)[sapply(clean_data_filter, function(col) is.factor(col) || is.character(col))]
 
+
 # === Step 3: Combine numeric and categorical columns ===
 final_columns <- union(selected_numeric_cols, categorical_cols)
 
@@ -727,7 +722,8 @@ columns_to_exclude <- c("RoadwayFunctionalClassCond", "WeatherCondCond", "Lighti
 final_columns <- setdiff(final_columns, columns_to_exclude)
 
 # === Step 5: Create final dataframe ===
-final_df <- clean_data_filter[, final_columns]
+
+final_df <- clean_data[, final_columns]
 
 # === Step 6: Check structure ===
 str(final_df)
@@ -780,7 +776,8 @@ barplot(weather_counts,
 
 ```
 
-Most accidents happened in the month of October and are higher in the months of Nov,dec mostly because of Snow?(Why?), most of the time the condition was clear.
+
+Most accidents happened in the month of October and are higher in the months of Nov,dec mostly because of Snow?(Why?), most of the time the codition was clear.
 
 ```{r}
 library(ggplot2)

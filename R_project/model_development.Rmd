@@ -240,12 +240,14 @@ get_f1_vals(test[,1],yhats)
 
 ## More Feature Selection
 
+
 ```{r}
 library(glmnet)
 set.seed(1)
 
 x = model.matrix(CrashSeverity ~ ., data = train)[,-1]
 y = as.integer(train$CrashSeverity) - 1
+
 
 cv.lasso = cv.glmnet(x, y, alpha = 1, family = "multinomial")
 
@@ -266,6 +268,7 @@ selected_features <- unique(unlist(lapply(lasso.coefs, function(m) {
 # lasso_coef <- coef(lasso_cv, s = "lambda.min")
 # print("Lasso selected features:")
 # print(lasso_coef[lasso_coef[,1] != 0, , drop=FALSE])
+
 
 selected_features = c("CrashSeverity", selected_features)
 

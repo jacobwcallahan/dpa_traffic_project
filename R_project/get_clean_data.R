@@ -7,6 +7,7 @@ get_clean_data = function(df = NULL) {
     df = as.data.frame(read.csv(here::here("final_dataset_test.csv")))
   }
   unclean_data = df
+
   
   unclean_data$DamagedProperty = as.factor(get_prop_damage_cats(unclean_data$DamagedProperty1))
   
@@ -15,7 +16,7 @@ get_clean_data = function(df = NULL) {
                                "Unable to Determine", unclean_data$Cause1)
   
   # Drops CrashSeverityCD and CrashInjurySeverity as they have collinearity with CrashSeverity
-  
+
   
   # Swapping CrashSeverity to first column
   unclean_data = unclean_data[, c("CrashSeverity", "TotalInjured", 
@@ -32,12 +33,14 @@ get_clean_data = function(df = NULL) {
   # unclean_data$TimeOfCrash = as.numeric(sapply(strsplit(unclean_data$TimeOfCrash,":"), function(x) x[1]))
   # 
   # colnames(unclean_data)[colnames(unclean_data) == "TimeOfCrash"] = "HourOfCrash"
+
   
   orig_data = unclean_data
   
   cols = colnames(orig_data)
   
   num_vars = c("TotalInjured")
+
   
   for (i in 1:length(orig_data)) {
     if (!colnames(orig_data)[i] %in% num_vars) {
